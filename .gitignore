@@ -1,0 +1,27 @@
+# credentials -- never commit these
+.env
+
+# cached market data, news and sentiment scores.
+# All regenerable, often large, and the news text is licensed content
+# (Benzinga via Alpaca) that should not be redistributed.
+data_cache/
+
+# run artifacts
+logs/
+runs/
+HALT
+
+# python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.venv/
+venv/
+
+# editors / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db

@@ -1,0 +1,12 @@
+# Chrome colours matched to the chart palette in core/theme.py.
+# Flip base to "dark" (or use the app's hamburger menu) and the charts follow.
+[theme]
+base = "light"
+primaryColor = "#2a78d6"
+backgroundColor = "#f9f9f7"
+secondaryBackgroundColor = "#fcfcfb"
+textColor = "#0b0b0b"
+font = "sans serif"
+
+[browser]
+gatherUsageStats = false

@@ -1,0 +1,21 @@
+# core
+pandas>=2.1
+numpy>=1.26
+plotly>=5.20
+streamlit>=1.36
+
+# free historical data, no API key needed
+yfinance>=0.2.40
+curl_cffi>=0.15          # yfinance rate-limits hard without it
+
+# your broker: market data + (later) order placement
+alpaca-py>=0.21
+
+# optional
+python-dotenv>=1.0
+pytest>=8.0
+
+# optional: FinBERT scoring for news (the lexicon scorer needs none of this)
+# pip install transformers torch --index-url https://download.pytorch.org/whl/cpu
+# transformers>=4.40
+# torch>=2.2
