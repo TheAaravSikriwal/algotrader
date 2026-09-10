@@ -14,16 +14,26 @@ makes the reasoning layer's contribution measurable rather than tangled into
 the strategy -- and it means switching the overlay off is one flag, not a
 rewrite.
 
-Same safety rails as the single-symbol loop, because the ways to lose money by
-accident do not change with the number of instruments: fill at the next open,
-never act while an order is still working, respect buying power, and stop on a
-daily loss.
+The rails match the single-symbol loop, because the ways to lose money by
+accident do not change with the number of instruments: a HALT file, a persisted
+daily-loss baseline, a per-order notional cap, a gross-exposure ceiling, whole
+shares only, no second order while one is still working, and an audit log of
+every cycle that sent anything.
+
+Two of those exist because of specific failures. The daily-loss baseline is
+persisted rather than held on the instance: Streamlit rebuilds this object on
+every button press, and an in-memory baseline silently re-anchors to the
+already-drawn-down equity. And `run_once` accepts a pre-computed plan, so a
+confirmation button sends the orders the user actually saw rather than
+recomputing a fresh book behind their back.
 """
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime, timezone
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -56,6 +66,10 @@ class PanelLiveConfig:
     require_market_open: bool = True
     use_closed_bars_only: bool = True
     max_daily_loss_pct: float = 3.0
+    max_order_notional: float | None = None   # None derives it from the book
+    max_gross: float = 1.05                   # refuse to lever past this
+    halt_file: str = "HALT"
+    log_dir: str = "logs/panel"
 
 
 @dataclass
@@ -84,8 +98,36 @@ class PanelTrader:
         self.broker = broker
         self.strategy = strategy
         self.cfg = cfg
-        self._session_start_equity: float | None = None
-        self._session_day: date | None = None
+        # Persisted, not held on the instance. Streamlit builds a fresh trader
+        # on every button press, so an in-memory baseline re-anchors to the
+        # already-drawn-down equity and the daily-loss rail never fires.
+        self.log_dir = Path(cfg.log_dir)
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+        self.state_file = self.log_dir / "state.json"
+        self.activity_log = self.log_dir / "activity.jsonl"
+
+    def _load_state(self) -> dict:
+        if self.state_file.exists():
+            try:
+                return json.loads(self.state_file.read_text())
+            except json.JSONDecodeError:
+                log.warning("state file unreadable; starting a fresh session")
+        return {}
+
+    def _session_baseline(self, account) -> float:
+        today = str(date.today())
+        state = self._load_state()
+        if state.get("date") != today:
+            state = {"date": today, "start_equity": account.equity}
+            self.state_file.write_text(json.dumps(state, indent=2, default=str))
+        return float(state.get("start_equity", account.equity))
+
+    def _record(self, event: str, **fields):
+        row = {"ts": datetime.now(timezone.utc).isoformat(), "event": event,
+               "broker": self.broker.name, "paper": self.broker.is_paper, **fields}
+        with self.activity_log.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(row, default=str) + "\n")
+        return row
 
     # -- building today's target ------------------------------------------
     def target_book(self) -> tuple[pd.Series, pd.Series, dict]:
@@ -137,6 +179,27 @@ class PanelTrader:
         deployable = equity * self.cfg.gross_target
         intents = []
 
+        # A symbol whose data feed dropped out disappears from `final`, so it
+        # would never be reconciled -- the position sits there untouched while
+        # the strategy re-weights across the survivors and total exposure
+        # climbs. Anything held but no longer in the book gets a target of zero.
+        held_symbols = {s.upper() for s in positions}
+        in_book = {str(s).upper() for s in final.index}
+        for symbol in sorted(held_symbols - in_book):
+            if symbol in working:
+                continue
+            held = positions[symbol]
+            price = float(held.market_value / held.qty) if held.qty else 0.0
+            if price <= 0:
+                log.error("%s: held but not in the book, and unpriceable", symbol)
+                continue
+            log.warning("%s: held but no longer in the book -- flattening", symbol)
+            intents.append(PanelIntent(
+                symbol=symbol, target_weight=0.0,
+                current_weight=held.qty * price / equity if equity > 0 else 0.0,
+                target_shares=0.0, current_shares=float(held.qty),
+                price=price, reason="not in the book"))
+
         for symbol, weight in final.items():
             symbol = symbol.upper()
             if symbol in working:
@@ -174,17 +237,29 @@ class PanelTrader:
     def execute(self, intents: list[PanelIntent], account) -> list[dict]:
         results = []
         remaining_bp = max(account.buying_power, 0.0)
+        cap = self.order_cap(account)
 
         # sells first: they free the buying power the buys need
         ordered = sorted(intents, key=lambda i: i.delta)
         for intent in ordered:
-            qty = abs(intent.delta)
+            # Whole shares. target_shares is truncated but current_shares comes
+            # from the broker and can be fractional, so the difference can be
+            # too -- and a fractional short leg is rejected outright.
+            qty = float(np.trunc(abs(intent.delta)))
             if qty < 1:
                 continue
             side = "buy" if intent.delta > 0 else "sell"
 
+            notional = qty * intent.price
+            if notional > cap:
+                log.warning("%s: skipped, $%s exceeds the $%s single-order cap",
+                            intent.symbol, f"{notional:,.0f}", f"{cap:,.0f}")
+                results.append({"symbol": intent.symbol, "action": "skipped",
+                                "reason": f"exceeds the ${cap:,.0f} order cap"})
+                continue
+
             if side == "buy":
-                needed = qty * intent.price
+                needed = notional
                 if needed > remaining_bp + 1e-9:
                     log.warning("%s: skipped, needs $%s of buying power, $%s left",
                                 intent.symbol, f"{needed:,.0f}", f"{remaining_bp:,.0f}")
@@ -212,22 +287,44 @@ class PanelTrader:
 
     # -- rails -------------------------------------------------------------
     def check_rails(self, account):
-        today = date.today()
-        if self._session_day != today:
-            self._session_day = today
-            self._session_start_equity = account.equity
+        # Resolved against this file's project root, not the working directory:
+        # launched from elsewhere, a cwd-relative kill switch silently does
+        # nothing, which is the worst possible failure for a kill switch.
+        halt = Path(self.cfg.halt_file)
+        if not halt.is_absolute():
+            halt = Path(__file__).resolve().parent.parent / halt
+        if halt.exists():
+            raise Halted(f"{halt.name} file present")
 
-        if self._session_start_equity and self._session_start_equity > 0:
-            change = account.equity / self._session_start_equity - 1.0
+        if account.blocked:
+            raise Halted("the broker has this account blocked from trading")
+        if account.equity <= 0:
+            raise Halted("account equity is zero or negative")
+
+        baseline = self._session_baseline(account)
+        if baseline > 0:
+            change = account.equity / baseline - 1.0
             if change <= -abs(self.cfg.max_daily_loss_pct) / 100.0:
                 raise Halted(f"daily loss {change:.2%} hit the "
                              f"{self.cfg.max_daily_loss_pct:.2f}% limit")
 
-        if account.blocked:
-            raise Halted("the broker has this account blocked from trading")
+    def order_cap(self, account) -> float:
+        """Largest single order allowed, so one bad target cannot dominate."""
+        if self.cfg.max_order_notional:
+            return float(self.cfg.max_order_notional)
+        per_symbol = account.equity * self.cfg.gross_target / max(
+            len(self.cfg.symbols), 1)
+        # a full reversal is twice a one-way position, so allow for it
+        return per_symbol * (2.5 if self.cfg.allow_short else 1.5)
 
-    def run_once(self) -> dict:
-        """One full cycle. Returns everything that happened, for display."""
+    def run_once(self, intents: list[PanelIntent] | None = None) -> dict:
+        """One full cycle. Returns everything that happened, for display.
+
+        Pass `intents` to execute a plan the user has already seen and
+        approved. Without it the book is recomputed, which means the orders
+        sent can differ in count, size and side from the ones consented to --
+        fine for an unattended loop, wrong behind a confirmation button.
+        """
         account = self.broker.get_account()
         self.check_rails(account)
 
@@ -237,8 +334,19 @@ class PanelTrader:
                 return {"status": "market closed", "intents": [], "results": []}
 
         base, final, overlay_report = self.target_book()
-        intents = self.plan(account, final)
+        if intents is None:
+            intents = self.plan(account, final)
+
+        # Refuse to lever past the cap, whatever the targets say.
+        planned_gross = float(final.abs().sum())
+        if planned_gross > self.cfg.max_gross:
+            raise Halted(f"target book is {planned_gross:.2f}x gross, above the "
+                         f"{self.cfg.max_gross:.2f}x cap")
+
         results = self.execute(intents, account)
+        if not self.cfg.dry_run and results:
+            self._record("cycle", equity=account.equity, results=results,
+                         overlay=overlay_report.get("applied", []))
 
         return {
             "status": "dry run" if self.cfg.dry_run else "executed",
@@ -247,4 +355,5 @@ class PanelTrader:
             "base": base, "final": final,
             "overlay": overlay_report,
             "intents": intents, "results": results,
+            "planned_gross": planned_gross,
         }

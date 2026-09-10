@@ -201,7 +201,10 @@ def main():
             try:
                 trader, _ = connect(symbols, strategy, params, False,
                                     use_overlay, gross, bucket)
-                result = trader.run_once()
+                # Send the plan that was shown and consented to. Recomputing
+                # here would re-price the whole book, so the orders sent could
+                # differ in count, size and side from the ones on screen.
+                result = trader.run_once(intents=preview["intents"])
                 sent = [r for r in result["results"]
                         if r["action"] in ("buy", "sell")]
                 st.success(f"Sent {len(sent)} orders to the practice account.")

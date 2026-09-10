@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 
 from brokers.fake import FakeBroker
+from core.broker import BrokerError
 from core.explain import CHARTS, CONTROLS, METRICS, glossary_markdown, metric
 from core.overlay import Overlay, record
 from core.paneltrader import PanelLiveConfig, PanelTrader
@@ -177,6 +178,122 @@ def test_base_is_recoverable_alongside_the_overlay():
     base_on, _, _ = t_on.target_book()
     base_off, _, _ = t_off.target_book()
     assert np.allclose(base_on.to_numpy(), base_off.to_numpy())
+
+
+# ---------------------------------------------------------------------------
+# the rails
+# ---------------------------------------------------------------------------
+def test_daily_loss_rail_survives_a_rebuilt_trader():
+    """Streamlit builds a fresh PanelTrader on every button press. A baseline
+    held on the instance re-anchors to the drawn-down equity and never fires."""
+    logs = Path(mkdtemp())
+    broker = FakeBroker(bars(), cash=100_000)
+    settings = dict(symbols=SYMBOLS, require_market_open=False, dry_run=False,
+                    use_overlay=False, max_daily_loss_pct=2.0, log_dir=str(logs))
+
+    first = PanelTrader(broker, get_xs_strategy("Equal weight all")(),
+                        PanelLiveConfig(**settings))
+    first.run_once()
+    broker._cash -= 40_000                       # a bad day
+
+    rebuilt = PanelTrader(broker, get_xs_strategy("Equal weight all")(),
+                          PanelLiveConfig(**settings))
+    try:
+        rebuilt.run_once()
+        raise AssertionError("a rebuilt trader traded through the daily limit")
+    except Halted as exc:
+        assert "daily loss" in str(exc)
+
+
+def test_halt_file_stops_the_book():
+    logs = Path(mkdtemp())
+    halt = logs / "HALT"
+    halt.write_text("stop")
+    t, broker = trader(dry_run=False, use_overlay=False, halt_file=str(halt),
+                       log_dir=str(logs))
+    try:
+        t.run_once()
+        raise AssertionError("traded with the halt file present")
+    except Halted as exc:
+        assert "HALT" in str(exc)
+    assert broker.submitted == []
+
+
+def test_a_dropped_feed_flattens_rather_than_orphaning():
+    """A symbol whose bars vanish must be sold, not left sitting while the
+    book re-weights across the survivors and gross exposure climbs."""
+    logs = Path(mkdtemp())
+    broker = FakeBroker(bars(), cash=100_000)
+    t = PanelTrader(broker, get_xs_strategy("Equal weight all")(),
+                    PanelLiveConfig(symbols=SYMBOLS, require_market_open=False,
+                                    dry_run=False, use_overlay=False,
+                                    log_dir=str(logs)))
+    t.run_once()
+    assert "XLE" in broker.get_positions()
+
+    original = broker.get_bars
+
+    def missing(symbol, timeframe="1Day", limit=300):
+        if symbol.upper() == "XLE":
+            raise BrokerError("feed down")
+        return original(symbol, timeframe, limit)
+
+    broker.get_bars = missing
+    out = t.run_once()
+    orphan = [i for i in out["intents"] if i.symbol == "XLE"]
+    assert orphan, "the orphaned position was never reconciled"
+    assert orphan[0].target_shares == 0.0
+    assert orphan[0].reason == "not in the book"
+
+
+def test_execute_uses_the_plan_it_was_given():
+    """A confirmation button must send the orders the user saw, not a fresh
+    book recomputed behind them."""
+    t, broker = trader(dry_run=False, use_overlay=False)
+    account = broker.get_account()
+    _, final, _ = t.target_book()
+    approved = t.plan(account, final)[:1]        # the user approves one trade
+
+    t.run_once(intents=approved)
+    assert len(broker.submitted) == 1, (
+        f"sent {len(broker.submitted)} orders for a one-order plan")
+    assert broker.submitted[0].symbol == approved[0].symbol
+
+
+def test_single_order_notional_is_capped():
+    t, broker = trader(dry_run=False, use_overlay=False,
+                       max_order_notional=100.0)
+    out = t.run_once()
+    assert any(r["action"] == "skipped" and "cap" in r.get("reason", "")
+               for r in out["results"]), out["results"]
+
+
+def test_fractional_holdings_do_not_produce_fractional_orders():
+    """target_shares is truncated, but the broker can report a fractional
+    holding, so the difference between them can be fractional too."""
+    from core.broker import Position
+
+    t, broker = trader(dry_run=False, use_overlay=False)
+    t.run_once()
+    held = broker.get_positions()["SPY"]
+    # Large enough to clear the dust filter -- at 0.37 shares the intent is
+    # discarded as too small to bother with and the rounding path never runs,
+    # which is how the first version of this test passed against no rounding.
+    broker._positions["SPY"] = Position("SPY", held.qty + 40.37, held.avg_price)
+
+    before = len(broker.submitted)
+    out = t.run_once()
+    sent = broker.submitted[before:]
+    assert sent, f"no order placed; intents were {[(i.symbol, i.delta) for i in out['intents']]}"
+    for order in sent:
+        assert order.qty == int(order.qty), f"fractional order qty {order.qty}"
+
+
+def test_cycles_that_send_orders_leave_an_audit_trail():
+    logs = Path(mkdtemp())
+    t, _ = trader(dry_run=False, use_overlay=False, log_dir=str(logs))
+    t.run_once()
+    assert (logs / "activity.jsonl").exists(), "no audit trail of a live cycle"
 
 
 # ---------------------------------------------------------------------------
