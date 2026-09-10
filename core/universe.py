@@ -70,6 +70,9 @@ class Profile:
     top_n: int = 20
     rank_by: str = "dollar_volume"      # descending
     rank_ascending: bool = False
+    asset_types: tuple = ()             # empty means any
+    min_bucket_share: float = 0.0       # of coverage in `bucket`
+    bucket: str = ""                    # "company" or "macro"
 
 
 PROFILES = {
@@ -85,14 +88,22 @@ PROFILES = {
                    "matters is a long clean history and enough depth to size."),
         min_price=5.0, min_dollar_volume=2e7, min_history_days=1000,
         min_completeness=0.98, top_n=30),
-    "reasoning": Profile(
-        name="reasoning",
-        rationale=("Needs something written about it. Screens on news volume "
-                   "first, liquidity second -- an uncovered name cannot be "
-                   "traded on coverage."),
-        min_price=5.0, min_dollar_volume=5e7, min_news_per_day=0.3,
-        min_history_days=500, top_n=20,
-        rank_by="news_per_day"),
+    "company_reasoning": Profile(
+        name="company_reasoning",
+        rationale=("Single names with enough corporate coverage to reason "
+                   "about. Excludes baskets: news 'about SPY' is market "
+                   "commentary, not an event happening to a company."),
+        min_price=5.0, min_dollar_volume=5e7, min_news_per_day=0.5,
+        min_history_days=500, top_n=20, rank_by="company_news_per_day",
+        asset_types=("company",), bucket="company", min_bucket_share=0.25),
+    "macro_reasoning": Profile(
+        name="macro_reasoning",
+        rationale=("Index and sector baskets, traded on macro events. These "
+                   "are the instruments a rate decision or a war actually "
+                   "moves as a whole, and they pair with the GDELT features."),
+        min_price=5.0, min_dollar_volume=1e7, min_news_per_day=0.2,
+        min_history_days=500, top_n=15, rank_by="dollar_volume",
+        asset_types=("etf",)),
 }
 
 
@@ -126,19 +137,38 @@ def metrics_for(df: pd.DataFrame, window: int = 252) -> dict:
 
 def profile_frame(bars: dict[str, pd.DataFrame],
                   news_counts: dict[str, float] | None = None,
-                  window: int = 252) -> pd.DataFrame:
-    """One row of tradability metrics per symbol."""
+                  window: int = 252,
+                  news_profiles: dict[str, dict] | None = None,
+                  days: int = 90) -> pd.DataFrame:
+    """One row per symbol: tradability, asset type, and its news category mix.
+
+    `news_profiles` carries the per-stock breakdown from
+    `core.taxonomy.profile_texts`, so the frame answers not just "how much
+    coverage" but "coverage of what".
+    """
+    from .taxonomy import asset_type
+
     rows = []
     for symbol, df in bars.items():
         stats = metrics_for(df, window)
         if not stats:
             continue
-        stats["symbol"] = symbol.upper()
-        stats["news_per_day"] = float((news_counts or {}).get(symbol.upper(), 0.0))
+        symbol = symbol.upper()
+        stats["symbol"] = symbol
+        stats["asset_type"] = asset_type(symbol)
+        stats["news_per_day"] = float((news_counts or {}).get(symbol, 0.0))
+
+        profile = (news_profiles or {}).get(symbol, {})
+        stats.update({k: v for k, v in profile.items() if k != "articles"})
+        for bucket in ("company", "macro"):
+            share = float(profile.get(f"{bucket}_share", 0.0))
+            both = float(profile.get("both_share", 0.0))
+            # a story tagged both counts toward each bucket's usable coverage
+            stats[f"{bucket}_news_per_day"] = stats["news_per_day"] * (share + both)
         rows.append(stats)
 
     if not rows:
-        return pd.DataFrame(columns=["symbol", "news_per_day"] + METRICS)
+        return pd.DataFrame(columns=["symbol", "asset_type", "news_per_day"] + METRICS)
     return pd.DataFrame(rows).set_index("symbol").sort_index()
 
 
@@ -162,6 +192,13 @@ def screen(frame: pd.DataFrame, profile: Profile | str) -> pd.DataFrame:
     }
     if prof.min_news_per_day > 0:
         checks["news"] = frame["news_per_day"] >= prof.min_news_per_day
+    if prof.asset_types and "asset_type" in frame:
+        checks["asset_type"] = frame["asset_type"].isin(prof.asset_types)
+    if prof.bucket and prof.min_bucket_share > 0:
+        column = f"{prof.bucket}_share"
+        both = frame.get("both_share", pd.Series(0.0, index=frame.index))
+        usable = frame.get(column, pd.Series(0.0, index=frame.index)) + both
+        checks[f"{prof.bucket}_coverage"] = usable >= prof.min_bucket_share
 
     passing = pd.Series(True, index=frame.index)
     for mask in checks.values():
@@ -193,4 +230,8 @@ def describe_profile(profile: Profile | str) -> str:
         bits.append(f"daily range <= {prof.max_range_pct:.1%}")
     if prof.min_news_per_day > 0:
         bits.append(f"news >= {prof.min_news_per_day}/day")
+    if prof.asset_types:
+        bits.append(f"asset type in {', '.join(prof.asset_types)}")
+    if prof.bucket and prof.min_bucket_share > 0:
+        bits.append(f"{prof.min_bucket_share:.0%} of coverage {prof.bucket}")
     return f"{prof.rationale}\n  Requires: " + "; ".join(bits)

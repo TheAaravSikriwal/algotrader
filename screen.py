@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from core.data import load_bars
 from core.env import load_env
 from core.news import NewsError, load_news
+from core.taxonomy import top_categories
 from core.universe import (CANDIDATE_POOL, PROFILES, describe_profile,
                            profile_frame, screen)
 
@@ -48,19 +49,22 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def gather_news_counts(symbols, days: int) -> dict[str, float]:
+def gather_news(symbols, days: int) -> tuple[dict, dict]:
+    """Coverage volume and, per symbol, what that coverage is actually about."""
+    from core.taxonomy import profile_texts
+
     end = date.today()
     start = end - timedelta(days=days)
-    counts = {}
+    counts, profiles = {}, {}
     for symbol in symbols:
         try:
             items = load_news([symbol], start, end)
-            counts[symbol] = len(items) / max(days, 1)
-        except NewsError:
-            counts[symbol] = 0.0
-        except Exception:  # noqa: BLE001
-            counts[symbol] = 0.0
-    return counts
+        except (NewsError, Exception):  # noqa: BLE001
+            counts[symbol], profiles[symbol] = 0.0, profile_texts([])
+            continue
+        counts[symbol] = len(items) / max(days, 1)
+        profiles[symbol] = profile_texts([i.text for i in items])
+    return counts, profiles
 
 
 def main(argv=None) -> int:
@@ -89,12 +93,12 @@ def main(argv=None) -> int:
         print("Too few candidates returned data to screen.")
         return 1
 
-    news_counts = None
+    news_counts, news_profiles = None, None
     if args.with_news:
         print(f"  measuring news coverage over {args.news_days} days...")
-        news_counts = gather_news_counts(list(bars), args.news_days)
+        news_counts, news_profiles = gather_news(list(bars), args.news_days)
 
-    frame = profile_frame(bars, news_counts, args.window)
+    frame = profile_frame(bars, news_counts, args.window, news_profiles)
     profiles = sorted(PROFILES) if args.profile == "all" else [args.profile]
     results = {}
 
@@ -126,9 +130,22 @@ def main(argv=None) -> int:
         show.columns = ["price", "$vol (M)", "amihud", "range %", "vol %", "bars"]
         if news_counts:
             show["news/day"] = picked["news_per_day"].round(2)
+            column = f"{prof.bucket}_news_per_day" if prof.bucket else ""
+            if column and column in picked:
+                show[f"{prof.bucket}/day"] = picked[column].round(2)
 
         print(show.to_string(float_format=lambda x: f"{x:,.2f}"))
         print(f"\n  {len(picked)} names: {','.join(picked.index)}\n")
+
+        if news_profiles:
+            bucket = prof.bucket or ("macro" if "etf" in prof.asset_types
+                                     else "company")
+            print(f"  what that coverage is actually about ({bucket}):")
+            for symbol in picked.index[:10]:
+                top = top_categories(news_profiles.get(symbol, {}), bucket, 3)
+                shown = ", ".join(f"{k} {v:.0%}" for k, v in top if v > 0)
+                print(f"    {symbol:<7} {shown or 'nothing classified'}")
+            print()
         results[name] = picked
 
     if results:
