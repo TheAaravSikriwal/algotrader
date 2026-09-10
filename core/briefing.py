@@ -130,7 +130,12 @@ GUARDRAILS = f"""Rules for your response:
 * Issuing an empty list is a valid and often correct answer. Most news is
   already priced. You are not being graded on finding something.
 * Do not reason from what you remember these tickers doing. Reason from the
-  mechanism described in the event."""
+  mechanism described in the event.
+* Where a "what happened last time" section appears, weigh it by its sample
+  size. One precedent is an anecdote and should barely move your confidence;
+  a dozen consistent ones is a reason to raise it. Precedents that went against
+  the tilt are the most informative rows in the table -- say so if you are
+  overriding them."""
 
 SCHEMA_EXAMPLE = json.dumps({
     "schema": SCHEMA,
@@ -175,6 +180,20 @@ def render_markdown(briefing: Briefing, max_articles: int = 40) -> str:
         for key, value in briefing.context.items():
             shown = f"{value:.3f}" if isinstance(value, float) else value
             lines.append(f"- {key.replace('_', ' ')}: {shown}")
+
+    precedents = briefing.context.pop("_precedents", None) if briefing.context else None
+    if precedents is not None and not precedents.empty:
+        lines += ["", "## What happened last time", "",
+                  "Scored outcomes from earlier reasoning on events of this "
+                  "shape. Each was written before its outcome existed, so none "
+                  "of it is hindsight. Read the count before the averages.", ""]
+        lines.append("| issued | symbol | matched on | tilt | abnormal return | right? |")
+        lines.append("|---|---|---|---|---|---|")
+        for _, row in precedents.head(12).iterrows():
+            lines.append(
+                f"| {row['issued']} | {row['symbol']} | {row['matched_on'] or '-'} "
+                f"| {row['tilt']:+.3f} | {row['abnormal_return']:+.2%} "
+                f"| {'yes' if row['correct'] else 'no'} |")
 
     lines += ["", f"## Events ({min(len(briefing.articles), max_articles)} shown)"]
     if briefing.articles.empty:

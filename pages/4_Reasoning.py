@@ -30,6 +30,9 @@ from core.news import NewsError, load_news, to_frame
 from core.overlay import (DEFAULT_MAX_TILT, Overlay, OverlayError,
                           apply_overlay, ledger_frame, parse_overlay, record)
 from core.panel import Panel, PanelConfig, run_panel_backtest
+from core.precedent import (find_precedents, load_outcomes, score_pending,
+                            summarise_precedents)
+from core.taxonomy import classify
 from core.ui import page_header, tile
 from strategies.cross_sectional import available_xs, get_xs_strategy
 
@@ -136,17 +139,36 @@ def main():
             except GdeltError as exc:
                 st.caption(f"World-event context unavailable: {exc}")
 
+        # Positions expire; what they taught does not. Pull scored outcomes
+        # from events of this shape so the reasoning sees its own track record.
+        categories = sorted({c for text_ in
+                             articles.get("text", pd.Series(dtype=str)).astype(str)
+                             for c in (classify(text_)["macro"]
+                                       + classify(text_)["company"])})
+        precedents = find_precedents(categories, bucket=bucket) if categories \
+            else pd.DataFrame()
+        stats = summarise_precedents(precedents)
+        if not precedents.empty:
+            context["_precedents"] = precedents
+
         briefing = build_briefing(articles, book, bucket=bucket,
                                   symbols=list(symbols), since_days=since_days,
                                   context=context)
         text = briefing.to_markdown()
 
-        cols = st.columns(4)
+        cols = st.columns(5)
         tile(cols[0], "Events", f"{len(briefing.articles)}",
              f"last {since_days} days")
         tile(cols[1], "Book", f"{int((book.abs() > 1e-6).sum())}", "positions held")
-        tile(cols[2], "Bucket", bucket, "reasoning scope")
-        tile(cols[3], "Packet", f"{len(text):,}", "characters")
+        tile(cols[2], "Precedents", f"{stats['n']}", "scored outcomes on record",
+             "up" if stats["n"] >= 5 else "flat")
+        tile(cols[3], "Hit rate",
+             f"{stats.get('hit_rate', 0):.0%}" if stats["n"] else "—",
+             "past calls that went the right way")
+        tile(cols[4], "Packet", f"{len(text):,}", "characters")
+
+        if stats["n"]:
+            st.caption(stats["note"])
 
         if briefing.articles.empty:
             st.info("No qualifying events. Issuing no adjustments is the "
@@ -251,10 +273,51 @@ def main():
                                frame.to_csv(index=False).encode(),
                                file_name="overlay_ledger.csv", mime="text/csv")
 
+        st.divider()
+        st.markdown("#### Outcomes")
         st.caption(
-            "Every adjustment expires. A view that made sense in March should "
-            "not still be in the book in September because nobody removed it — "
-            "so no expiry, no adjustment.")
+            "Positions expire; what they taught does not. Once an adjustment "
+            "passes its expiry, the market's actual move is measured against "
+            "the benchmark and kept as a precedent — available to every future "
+            "briefing on an event of the same shape.")
+
+        outcomes = load_outcomes()
+        if st.button("Score expired adjustments"):
+            end = date.today()
+            from core.overlay import load_overlays
+            issued = {a.symbol for o in load_overlays() for a in o.adjustments}
+            all_symbols = tuple(sorted(issued | set(symbols)))
+            bars = cached_bars(all_symbols, str(end - timedelta(days=365 * 2)),
+                               str(end))
+            bench_bars = cached_bars(("SPY",), str(end - timedelta(days=365 * 2)),
+                                     str(end))
+            benchmark = bench_bars["SPY"]["close"] if "SPY" in bench_bars else None
+            fresh = score_pending(bars, benchmark)
+            if fresh:
+                st.success(f"Scored {len(fresh)} newly expired adjustment(s).")
+            else:
+                st.info("Nothing new to score — every expired adjustment already "
+                        "has an outcome, or none have expired yet.")
+            outcomes = load_outcomes()
+
+        if outcomes:
+            frame = find_precedents()
+            summary = summarise_precedents(frame)
+            cols = st.columns(4)
+            tile(cols[0], "Scored", f"{summary['n']}", "outcomes on record")
+            tile(cols[1], "Hit rate", f"{summary.get('hit_rate', 0):.0%}",
+                 "right direction")
+            tile(cols[2], "Mean contribution",
+                 f"{summary.get('mean_contribution_%', 0):+.2f}%", "per call")
+            tile(cols[3], "t", f"{summary.get('tstat', 0):+.2f}",
+                 "vs zero",
+                 "up" if abs(summary.get("tstat", 0)) >= 2 else "flat")
+            st.caption(summary["note"])
+            st.dataframe(frame, hide_index=True, use_container_width=True,
+                         height=300)
+        else:
+            st.info("No outcomes scored yet. They appear once issued "
+                    "adjustments pass their expiry.")
 
 
 if __name__ == "__main__":
