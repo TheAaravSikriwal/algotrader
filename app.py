@@ -19,8 +19,9 @@ from core.bundle import BundleError, build_bundle, describe, load_bundle
 from core.data import DataError, bars_per_year, clear_cache, load_bars
 from core.engine import BacktestConfig, run_backtest
 from core.metrics import monthly_returns, summarise
-from core.strategy import Param, available, get_strategy
-from core.theme import FONT, tokens
+from core.strategy import available, get_strategy
+from core.ui import (active_mode, inject_css, param_control, pct, tile,
+                     tone_of)
 
 from core.env import load_env
 
@@ -30,76 +31,6 @@ import strategies  # noqa: F401  -- registers the built-ins
 st.set_page_config(page_title="Backtester", page_icon="~", layout="wide")
 
 TIMEFRAMES = ["1Day", "1Hour", "15Min", "5Min", "1Min"]
-
-
-# --------------------------------------------------------------------------
-# stat tiles
-# --------------------------------------------------------------------------
-def active_mode() -> str:
-    """Match the charts to the chrome by reading the configured theme base.
-
-    Deliberately `theme.base` from .streamlit/config.toml rather than
-    `st.context.theme.type` -- the latter reports the *browser's* preferred
-    colour scheme, which disagrees with the theme Streamlit actually paints
-    whenever config.toml pins one.
-    """
-    try:
-        return "dark" if st.get_option("theme.base") == "dark" else "light"
-    except Exception:  # noqa: BLE001
-        return "light"
-
-
-def inject_css(mode: str):
-    t = tokens(mode)
-    ring = "rgba(255,255,255,0.10)" if mode == "dark" else "rgba(11,11,11,0.10)"
-    st.markdown(f"""
-    <style>
-      html, body, [class*="css"] {{ font-family: {FONT}; }}
-      .tile {{
-        background: {t['surface']}; border: 1px solid {ring};
-        border-radius: 10px; padding: 14px 16px; height: 100%;
-      }}
-      .tile .label {{ font-size: 12px; color: {t['muted']}; letter-spacing: .02em; }}
-      .tile .value {{ font-size: 28px; line-height: 1.15; margin-top: 4px;
-                      color: {t['text_primary']}; font-weight: 600; }}
-      .tile .sub   {{ font-size: 12px; margin-top: 4px; color: {t['text_secondary']}; }}
-      .tile .value.up   {{ color: {t['good']}; }}
-      .tile .value.down {{ color: {t['critical']}; }}
-    </style>
-    """, unsafe_allow_html=True)
-
-
-def tile(col, label: str, value: str, sub: str = "", tone: str = ""):
-    cls = f" {tone}" if tone else ""
-    col.markdown(
-        f'<div class="tile"><div class="label">{label}</div>'
-        f'<div class="value{cls}">{value}</div>'
-        f'<div class="sub">{sub}</div></div>',
-        unsafe_allow_html=True)
-
-
-def pct(x: float, digits: int = 1) -> str:
-    return f"{x * 100:,.{digits}f}%"
-
-
-def tone_of(x: float) -> str:
-    return "up" if x > 0 else ("down" if x < 0 else "")
-
-
-# --------------------------------------------------------------------------
-# sidebar
-# --------------------------------------------------------------------------
-def param_control(p: Param, key: str):
-    if p.kind == "bool":
-        return st.checkbox(p.label, value=bool(p.default), key=key, help=p.help or None)
-    if p.kind == "choice":
-        return st.selectbox(p.label, p.choices, index=p.choices.index(p.default),
-                            key=key, help=p.help or None)
-    if p.kind == "float":
-        return st.slider(p.label, float(p.min), float(p.max), float(p.default),
-                         float(p.step or 0.1), key=key, help=p.help or None)
-    return st.slider(p.label, int(p.min), int(p.max), int(p.default),
-                     int(p.step or 1), key=key, help=p.help or None)
 
 
 @st.cache_data(show_spinner="Fetching bars...")
