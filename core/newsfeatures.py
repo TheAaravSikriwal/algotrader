@@ -94,21 +94,38 @@ def align_to_bars(features: pd.DataFrame, bar_index: pd.DatetimeIndex,
     """
     columns = list(features.columns) if not features.empty else (
         BASE_FEATURES + [f"event_{e}" for e in EVENT_NAMES])
-    empty = pd.DataFrame(0.0, index=bar_index, columns=columns)
+    original = pd.DatetimeIndex(bar_index)
     if features.empty:
-        return empty
+        return pd.DataFrame(0.0, index=original, columns=columns)
 
-    bar_index = pd.DatetimeIndex(bar_index).normalize()
-    positions = np.searchsorted(bar_index.values,
-                                pd.DatetimeIndex(features.index).normalize().values,
-                                side="left")
+    normalised = original.normalize()
+    if normalised.duplicated().any():
+        # Several bars share a calendar day, i.e. this is an intraday index.
+        # A session-level aggregate is only complete at that session's close,
+        # so attaching it to the 09:30 bar would hand the morning a headline
+        # printed at 15:55. Refuse rather than silently leak.
+        raise ValueError(
+            "daily news features cannot be aligned to intraday bars: a whole "
+            "session's aggregate would become readable at the first bar of the "
+            "day. Aggregate the news at the same frequency as the bars instead.")
 
-    aligned = empty.copy()
-    aligned.index = bar_index
+    positions = np.searchsorted(
+        normalised.values,
+        pd.DatetimeIndex(features.index).normalize().values, side="left")
+
+    # Several sessions can land on one bar -- a market holiday leaves its
+    # session without a bar of its own, and it rolls to the next. Summing that
+    # is only right for counts. Summing a mean produces values outside its own
+    # bounds, and summing an EWM is meaningless.
+    buckets: dict[int, list] = {}
     for pos, (_, row) in zip(positions, features.iterrows()):
-        if pos >= len(bar_index):
+        if pos >= len(original):
             continue                       # news after the last bar: unusable
-        aligned.iloc[pos] += row.reindex(columns).fillna(0.0).to_numpy()
+        buckets.setdefault(int(pos), []).append(row.reindex(columns).fillna(0.0))
+
+    aligned = pd.DataFrame(0.0, index=original, columns=columns)
+    for pos, rows in buckets.items():
+        aligned.iloc[pos] = _combine_sessions(rows, columns).to_numpy()
 
     if carry_forward > 0:
         mask = aligned["news_count"] > 0
@@ -116,8 +133,40 @@ def align_to_bars(features: pd.DataFrame, bar_index: pd.DatetimeIndex,
             aligned[col] = aligned[col].where(mask).ffill(limit=carry_forward)
         aligned = aligned.fillna(0.0)
 
-    aligned.index = pd.DatetimeIndex(bar_index)
     return aligned
+
+
+# counts genuinely add up across sessions; nothing else does
+SUM_COLUMNS = {"news_count", "news_intensity"}
+MAX_COLUMNS = {"news_sentiment_max"}
+MIN_COLUMNS = {"news_sentiment_min"}
+
+
+def _combine_sessions(rows: list, columns: list) -> pd.Series:
+    """Merge several sessions that land on one bar, per column semantics."""
+    block = pd.DataFrame(rows, columns=columns).astype(float)
+    if len(block) == 1:
+        return block.iloc[0]
+
+    weights = block["news_count"] if "news_count" in block else None
+    if weights is None or float(weights.sum()) <= 0:
+        weights = pd.Series(1.0, index=block.index)
+
+    out = {}
+    for col in columns:
+        if col in SUM_COLUMNS or col.startswith("event_"):
+            out[col] = float(block[col].sum())
+        elif col in MAX_COLUMNS:
+            out[col] = float(block[col].max())
+        elif col in MIN_COLUMNS:
+            out[col] = float(block[col].min())
+        elif "_ewm" in col:
+            # already a time-weighted history; the latest session's value is
+            # the current state, and adding two of them means nothing
+            out[col] = float(block[col].iloc[-1])
+        else:
+            out[col] = float((block[col] * weights).sum() / weights.sum())
+    return pd.Series(out, index=columns)
 
 
 def build_news_features(scored: pd.DataFrame, bars: pd.DataFrame,

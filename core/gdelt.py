@@ -291,8 +291,25 @@ def attach_to_bars(features: pd.DataFrame, bars: pd.DataFrame,
         days=int(availability_lag_days))
 
     aligned = align_to_bars(shifted, bars.index)
-    # align_to_bars sums into bars; a macro level should persist, not reset
-    live = aligned.replace(0.0, np.nan)
+
+    # Which bars actually received a reading, tracked explicitly. The previous
+    # version inferred it with `replace(0.0, nan)`, which cannot tell "no file
+    # today" from "the file said zero" -- and zero is a legitimate value for
+    # tone, Goldstein and publication lag. Genuine zeros were being discarded
+    # and overwritten with the previous day's number.
+    # Mark the bar *positions* that received a reading, not the feature dates:
+    # a Sunday file rolls forward to Monday's bar, so the receiving bar carries
+    # a different date than the feature did. Same searchsorted as the aligner.
+    normalised = pd.DatetimeIndex(aligned.index).normalize()
+    positions = np.searchsorted(
+        normalised.values,
+        pd.DatetimeIndex(shifted.index).normalize().values, side="left")
+    covered = np.zeros(len(aligned), dtype=bool)
+    for pos in positions:
+        if 0 <= pos < len(aligned):
+            covered[pos] = True
+
+    live = aligned.where(covered[:, None])
     if carry_forward > 0:
         live = live.ffill(limit=carry_forward)
     return live.fillna(0.0)

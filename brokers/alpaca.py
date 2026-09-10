@@ -12,7 +12,7 @@ If the live variables are unset, live mode cannot start at all.
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 
@@ -133,8 +133,21 @@ class AlpacaBroker(Broker):
             "1Min": TimeFrame.Minute,
         }[timeframe]
 
+        # `limit` alone is not enough: without a start date Alpaca returns only
+        # the most recent sliver -- one bar, in practice -- and every caller
+        # asking for history silently gets nothing usable. Ask for a window wide
+        # enough to contain `limit` bars, then trim.
+        span = {"1Day": 1.0, "1Hour": 1 / 6.5, "15Min": 1 / 26,
+                "5Min": 1 / 78, "1Min": 1 / 390}[timeframe]
+        calendar_days = max(int(limit * span * 1.6) + 7, 7)
+        start = datetime.now(timezone.utc) - timedelta(days=calendar_days)
+
+        # No `limit` on the request. Alpaca applies it from `start` *forward*,
+        # so pairing a wide window with a limit returns the OLDEST n bars --
+        # a strategy would then be reading months-stale prices while looking
+        # perfectly healthy. Fetch the window and take the tail instead.
         bars = self._data.get_stock_bars(StockBarsRequest(
-            symbol_or_symbols=symbol.upper(), timeframe=tf, limit=limit))
+            symbol_or_symbols=symbol.upper(), timeframe=tf, start=start))
         df = bars.df
         if df is None or df.empty:
             raise BrokerError(f"Alpaca returned no bars for {symbol}")
@@ -145,7 +158,7 @@ class AlpacaBroker(Broker):
         df = df[COLUMNS].astype(float)
         if isinstance(df.index, pd.DatetimeIndex) and df.index.tz is not None:
             df.index = df.index.tz_convert(None)
-        return df.sort_index()
+        return df.sort_index().tail(limit)
 
     # ---- orders ---------------------------------------------------------
     def submit_order(self, symbol: str, qty: float, side: str,

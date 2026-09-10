@@ -54,16 +54,50 @@ def test_slippage_costs_money():
     assert costly.equity.iloc[-1] < 1000                # every round trip pays the spread
 
 
-def test_stop_loss_caps_the_loss():
-    df = make_bars([100, 100, 100, 80, 60, 40])
-    signals = pd.Series(1.0, index=df.index)
-    res = run_backtest(df, signals, BacktestConfig(
-        initial_cash=1000, slippage_bps=0, stop_loss_pct=10))
+def test_stop_fills_at_the_stop_when_price_walks_down_to_it():
+    """No gap: the bar trades through the stop level, so the fill is the stop."""
+    # opens at 100 each bar, low reaches 88 on bar 3 -- the stop at 90 is touched
+    df = make_bars([100, 100, 100, 95, 95, 95], spread=0.0)
+    df.loc[df.index[3], "low"] = 88.0
+    df.loc[df.index[3], "open"] = 99.0
 
+    res = run_backtest(df, pd.Series(1.0, index=df.index), BacktestConfig(
+        initial_cash=1000, slippage_bps=0, stop_loss_pct=10))
     stopped = res.trades[res.trades["exit_reason"] == "stop"]
     assert len(stopped) == 1
-    assert abs(stopped.iloc[0]["return_pct"] + 10) < 1e-6   # exactly -10%
-    assert res.equity.iloc[-1] > 850                        # far better than riding to 40
+    assert abs(stopped.iloc[0]["exit_price"] - 90.0) < 1e-6, stopped.iloc[0].to_dict()
+
+
+def test_stop_fills_at_the_open_when_the_bar_gaps_through_it():
+    """The case stops exist for. A stop is an instruction to sell once the
+    level trades, not a promise of that price -- if the market opens below it,
+    that is where you get out. Filling at the stop reports a capped loss on an
+    uncapped move."""
+    df = make_bars([100, 100, 100, 50, 50, 50], spread=0.0)   # bar 3 gaps 100 -> 50
+
+    res = run_backtest(df, pd.Series(1.0, index=df.index), BacktestConfig(
+        initial_cash=1000, slippage_bps=0, stop_loss_pct=10))
+    stopped = res.trades[res.trades["exit_reason"] == "stop"]
+    assert len(stopped) == 1
+
+    exit_price = stopped.iloc[0]["exit_price"]
+    assert abs(exit_price - 50.0) < 1e-6, (
+        f"filled at {exit_price:.2f}; a gap to 50 cannot fill at the 90 stop")
+    assert stopped.iloc[0]["return_pct"] < -45, "reported a capped loss on a 50% gap"
+    assert res.equity.iloc[-1] < 600, (
+        f"equity {res.equity.iloc[-1]:.0f} -- the old bug reported ~900 here")
+
+
+def test_target_fills_at_the_open_when_the_bar_gaps_past_it():
+    """A gap through a target fills better than the target, not at it."""
+    df = make_bars([100, 100, 100, 140, 140, 140], spread=0.0)
+
+    res = run_backtest(df, pd.Series(1.0, index=df.index), BacktestConfig(
+        initial_cash=1000, slippage_bps=0, take_profit_pct=10))
+    hit = res.trades[res.trades["exit_reason"] == "target"]
+    assert len(hit) == 1
+    assert abs(hit.iloc[0]["exit_price"] - 140.0) < 1e-6, (
+        "gave away a favourable gap by filling at the target")
 
 
 def test_take_profit_fires():

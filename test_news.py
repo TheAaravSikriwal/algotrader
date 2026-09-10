@@ -267,6 +267,49 @@ def test_news_item_frame_expands_symbols():
     assert (frame["session"] == pd.Timestamp("2024-03-12")).all()
 
 
+def test_holiday_sessions_do_not_sum_into_one_bar():
+    """Two sessions landing on one bar must not add their means together.
+    news_sentiment is bounded to [-1, 1]; summing two sessions breaks that."""
+    bars_index = pd.DatetimeIndex(["2024-07-03", "2024-07-05", "2024-07-08"])
+    scored = scored_frame([pd.Timestamp("2024-07-04"),   # holiday, no bar
+                           pd.Timestamp("2024-07-05")], [0.9, 0.8])
+    aligned = align_to_bars(daily_features(scored, "TEST"), bars_index)
+
+    row = aligned.loc["2024-07-05"]
+    assert row["news_count"] == 2.0, "counts should still add up"
+    assert -1.0 <= row["news_sentiment"] <= 1.0, (
+        f"news_sentiment {row['news_sentiment']:.2f} is outside its own bounds")
+    assert abs(row["news_sentiment"] - 0.85) < 1e-6, "should be the weighted mean"
+
+
+def test_alignment_preserves_the_original_bar_stamps():
+    """Alpaca daily bars are stamped at the session open, not midnight. If the
+    features come back midnight-normalised the join silently yields all NaN."""
+    stamped = pd.DatetimeIndex(["2024-01-02 05:00", "2024-01-03 05:00",
+                                "2024-01-04 05:00"])
+    scored = scored_frame([pd.Timestamp("2024-01-03")], [0.7])
+    aligned = align_to_bars(daily_features(scored, "TEST"), stamped)
+
+    assert aligned.index.equals(stamped), "returned a different index than it was given"
+    bars = pd.DataFrame({"close": [1.0, 2.0, 3.0]}, index=stamped)
+    joined = bars.join(aligned)
+    assert joined["news_count"].notna().all(), "the join produced NaN"
+    assert joined.loc["2024-01-03 05:00", "news_count"] == 1.0
+
+
+def test_intraday_alignment_is_refused_rather_than_leaked():
+    """A session aggregate attached to the 09:30 bar would make a 15:55
+    headline readable in the morning."""
+    intraday = pd.DatetimeIndex(["2024-01-02 09:30", "2024-01-02 12:00",
+                                 "2024-01-02 15:30"])
+    scored = scored_frame([pd.Timestamp("2024-01-02")], [0.5])
+    try:
+        align_to_bars(daily_features(scored, "TEST"), intraday)
+        raise AssertionError("silently aligned daily features to intraday bars")
+    except ValueError as exc:
+        assert "intraday" in str(exc)
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

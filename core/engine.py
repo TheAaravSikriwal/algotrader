@@ -148,9 +148,18 @@ def run_backtest(df: pd.DataFrame, signals: pd.Series,
 
             hit_px, reason = None, ""
             if stop_frac > 0 and ((long and lows[i] <= stop_px) or (not long and highs[i] >= stop_px)):
-                hit_px, reason = stop_px, "stop"
+                # A stop is an instruction to sell at market once the level
+                # trades, not a promise of that price. If the bar opened beyond
+                # the stop -- a gap, which is when stops matter most -- the fill
+                # is the open. Filling at the stop level regardless reports a
+                # capped loss on an uncapped move, and flatters every backtest
+                # that uses stops precisely in the scenarios stops exist for.
+                hit_px = min(px_open, stop_px) if long else max(px_open, stop_px)
+                reason = "stop"
             elif tp_frac > 0 and ((long and highs[i] >= tp_px) or (not long and lows[i] <= tp_px)):
-                hit_px, reason = tp_px, "target"
+                # A gap through a target fills better than the target, not at it
+                hit_px = max(px_open, tp_px) if long else min(px_open, tp_px)
+                reason = "target"
 
             if hit_px is not None:
                 exec_px = hit_px * (1 - slip) if long else hit_px * (1 + slip)

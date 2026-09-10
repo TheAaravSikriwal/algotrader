@@ -149,6 +149,34 @@ def test_carry_forward_holds_the_last_reading():
     assert aligned["gdelt_tone"].iloc[3] == 0.0, "carried further than allowed"
 
 
+def test_a_genuine_zero_is_not_treated_as_missing_data():
+    """Tone, Goldstein and publication lag can legitimately be exactly zero.
+    Treating that as 'no file today' and forward-filling yesterday's number
+    silently replaces real data with stale data."""
+    features = pd.DataFrame(
+        {"gdelt_tone": [-5.0, 0.0, -3.0]},
+        index=pd.DatetimeIndex(["2024-03-11", "2024-03-12", "2024-03-13"]))
+    bars = pd.DataFrame(index=pd.bdate_range("2024-03-12", periods=3))
+
+    aligned = attach_to_bars(features, bars, carry_forward=5)
+    assert aligned["gdelt_tone"].iloc[1] == 0.0, (
+        f"a real zero became {aligned['gdelt_tone'].iloc[1]} -- yesterday's value")
+
+
+def test_sessions_landing_on_one_bar_are_not_summed():
+    """Friday, Saturday and Sunday all reach the Monday bar. Adding their tone
+    together makes every Monday read three times the true level."""
+    features = pd.DataFrame(
+        {"gdelt_tone": [-2.0] * 3},
+        index=pd.DatetimeIndex(["2024-03-15", "2024-03-16", "2024-03-17"]))
+    bars = pd.DataFrame(index=pd.DatetimeIndex(["2024-03-18", "2024-03-19"]))
+
+    aligned = attach_to_bars(features, bars, carry_forward=0)
+    monday = aligned.loc["2024-03-18", "gdelt_tone"]
+    assert abs(monday - (-2.0)) < 1e-9, (
+        f"Monday reads {monday} -- the sessions were summed instead of combined")
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

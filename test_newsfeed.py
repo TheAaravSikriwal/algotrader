@@ -67,7 +67,18 @@ def test_numbers_survive_tokenising():
     a = title_tokens("Fed cuts rates 50 bps")
     b = title_tokens("Fed cuts rates 25 bps")
     assert "50" in a and "25" in b
-    assert jaccard(a, b) < 1.0, "dropped the number and merged two rate decisions"
+
+
+def test_two_rate_decisions_are_not_merged():
+    """The property the tokeniser change was supposed to buy. Keeping the
+    digits is not enough on its own -- the pair still scores 0.67, so the
+    threshold has to sit above that or they collapse into one event."""
+    a = "Fed cuts rates 50 bps"
+    b = "Fed cuts rates 25 bps"
+    merged = deduplicate([item(a, "reuters", 0), item(b, "cnbc", 30)])
+    assert len(merged) == 2, (
+        f"jaccard {jaccard(title_tokens(a), title_tokens(b)):.3f} merged two "
+        "different rate decisions into one event")
 
 
 # ---------------------------------------------------------------------------

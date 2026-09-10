@@ -256,6 +256,22 @@ def jaccard(a: frozenset, b: frozenset) -> float:
     return len(a & b) / len(a | b)
 
 
+def same_numbers(a: frozenset, b: frozenset) -> bool:
+    """Do two headlines quote the same figures?
+
+    In a financial headline the number usually is the substance. "Fed cuts
+    rates 50 bps" and "Fed cuts rates 25 bps" share every other word and score
+    0.67 on token overlap -- comfortably inside any threshold loose enough to
+    merge genuine rewordings of one story. Text similarity cannot separate
+    those two cases; the figures can.
+    """
+    numbers_a = {t for t in a if t.isdigit()}
+    numbers_b = {t for t in b if t.isdigit()}
+    if not numbers_a or not numbers_b:
+        return True          # nothing to contradict
+    return bool(numbers_a & numbers_b)
+
+
 def deduplicate(items: list[FeedItem], threshold: float = 0.6,
                 window_hours: int = 36) -> list[FeedItem]:
     """Collapse the same story from many outlets into one weighted item.
@@ -277,7 +293,8 @@ def deduplicate(items: list[FeedItem], threshold: float = 0.6,
         for cluster in reversed(clusters):
             if item.published - cluster["latest"] > window:
                 break                      # ordered by time, so no earlier one fits
-            if jaccard(tokens[i], cluster["tokens"]) >= threshold:
+            if (jaccard(tokens[i], cluster["tokens"]) >= threshold
+                    and same_numbers(tokens[i], cluster["tokens"])):
                 cluster["members"].append(item)
                 cluster["latest"] = max(cluster["latest"], item.published)
                 cluster["tokens"] = cluster["tokens"] | tokens[i]
