@@ -297,6 +297,57 @@ or got delisted. The `megacap` universe is the worst offender — its equal-weig
 basket returned 174% out-of-sample against SPY's 71%, because the *universe* was
 chosen knowing who won. Momentum within a basket of known winners means little.
 
+## The research journal — where testing accumulates
+
+```bash
+python research.py test --strategy "Faber TAA" --symbols SPY --months 10 \
+    --hypothesis "A 10-month trend filter beats buy and hold on SPY"
+python research.py summary
+python research.py register --strategy "Faber TAA" --symbols SPY --months 10
+python research.py score
+```
+
+Every backtest above was a one-off: run it, read it, forget it. That loses the
+two things that matter more than any single result.
+
+### How many times you looked
+
+Test one strategy at the 5% level and |t| > 2 means something. Test forty and
+**two will clear that bar on noise alone** — you have not found an edge, you
+have found the best of forty coin flips. The journal counts distinct
+hypotheses and raises the bar accordingly (Bonferroni, plus a Benjamini-Hochberg
+FDR column for shortlisting).
+
+Re-running an identical spec does not count as a new look, so the bar tracks
+genuine searching rather than repetition.
+
+### What it says about this project
+
+Nine strategies, backfilled from the work above, all against the correct
+benchmark:
+
+| | |
+|---|---|
+| Tests run | 9 |
+| Naive bar | \|t\| ≥ 1.96 |
+| **Corrected bar** | **\|t\| ≥ 2.77** |
+| Beat benchmark at corrected bar | **0** |
+
+**All nine t-stats are negative.** Not one earned more per day than simply
+holding. Three cleared the naive bar — MACD (p=0.007), RSI (p=0.013), pairs
+trading (p=0.032) — and none survive correction.
+
+### Forward tests — the one thing that cannot be gamed
+
+Every backtest here runs on history that has already been picked over,
+including by us. The only unsearched dataset is the future.
+
+`research.py register` locks a specification and stamps it with today's date.
+Scoring uses **only bars after that date**, so no amount of prior searching can
+contaminate it — not optimisation, not survivorship, not hindsight in choosing
+the universe. It is slow by construction, and it is the only test here immune
+to everything the rest of this README warns about.
+
 ## Reading the output honestly
 
 A few things worth internalising before you trust any number on the dashboard:
