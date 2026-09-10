@@ -289,6 +289,52 @@ low-volatility artifact of a short sample.
 
 Across 22 strategies, nothing has significantly beaten equal-weighting.
 
+### From *151 Trading Strategies*
+
+Two strategies from Kakushadze and Serur, implemented to their specifications:
+
+**Residual momentum** (§3.7) ranks on the part of a return the market does *not*
+explain. Plain momentum quietly favours high-beta names, so in a rising market
+it is partly a leveraged index bet; regressing that out leaves stock-specific
+momentum. The paper uses three Fama-French factors — this uses the
+equal-weighted universe as a single market factor, which removes market beta
+but not size or value tilts.
+
+**Cluster mean-reversion** (§3.9) generalises pairs trading past two names:
+demean the cluster's returns and hold each stock in proportion to how far it
+strayed. Dollar-neutral by construction, and different from the long-only
+top-N bucket implemented above.
+
+### The `t vs 0` column, and why it exists
+
+Comparing a **dollar-neutral** book to a long-only basket penalises it for the
+market exposure it deliberately does not take. A market-neutral strategy can be
+a perfectly good standalone return stream and lose that comparison every time.
+So the report carries both: `t vs EW` (did the ranking add anything) and
+`t vs 0` (is the return distinguishable from zero at all).
+
+### What the two paper strategies did
+
+Held out on the Dow universe, 2022–2026:
+
+| Strategy | turnover | 5bps | 0bps | t vs 0 (0bps) |
+|---|---|---|---|---|
+| Cluster mean-reversion | 71×/yr | −5.9% | +11.1% | 0.61 |
+| Residual momentum | 3.6×/yr | +20.3% | +21.3% | 1.11 |
+| Pairs trading | 6.2×/yr | −4.4% | −3.0% | −0.27 |
+
+Cluster mean-reversion is **cost-driven** — it breaks even around 3bps, which
+retail execution does not reach. Residual momentum is not; its turnover is low
+enough that costs barely matter, so the signal simply is not strong.
+
+**Under the fair test, none produce a return distinguishable from zero even
+frictionless.** The unfair benchmark was not hiding anything.
+
+Meanwhile the long-only strategies all clear `t vs 0` — momentum 2.42, equal
+weight 2.34, inverse volatility 2.23, low volatility 2.13 — and none clear
+`t vs EW`. That is the equity risk premium showing up as significant, and no
+skill on top of it.
+
 ### Survivorship
 
 `Panel.survivorship_warning()` flags what it can detect, but it cannot fix the

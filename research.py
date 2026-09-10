@@ -86,9 +86,14 @@ def evaluate(name: str, symbols: list[str], start: str, end: str,
             raise SystemExit("a cross-sectional test needs at least 3 symbols")
 
         panel = Panel.from_bars(bars)
-        cfg = PanelConfig(initial_cash=cash, slippage_bps=slippage)
-        result = run_panel_backtest(panel, get_xs_strategy(name)(**params)
-                                    .generate_weights(panel), cfg)
+        weights = get_xs_strategy(name)(**params).generate_weights(panel)
+        # A dollar-neutral strategy asks for negative weights. Running it under
+        # a long-only config silently clips the short leg and journals a number
+        # that belongs to a different strategy, so infer the setting.
+        needs_shorts = bool((weights < -1e-9).any().any())
+        cfg = PanelConfig(initial_cash=cash, slippage_bps=slippage,
+                          allow_short=needs_shorts)
+        result = run_panel_backtest(panel, weights, cfg)
         benchmark = run_panel_backtest(
             panel, get_xs_strategy("Equal weight all")().generate_weights(panel), cfg
         ).equity

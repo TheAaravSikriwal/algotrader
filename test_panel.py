@@ -186,6 +186,74 @@ def test_every_xs_strategy_runs():
         assert np.isfinite(result.equity).all(), f"{name} broke the equity curve"
 
 
+def test_residual_momentum_ignores_pure_beta():
+    """A stock that is only a leveraged copy of the market has no residual
+    momentum, however much it rose. That separation is the whole point."""
+    rng = np.random.default_rng(21)
+    n = 900
+    idx = pd.bdate_range("2021-01-04", periods=n)
+    market = rng.normal(0.0006, 0.010, n)
+
+    series = {
+        "BETA2": 2.0 * market,                       # pure leveraged market
+        "BETA1": 1.0 * market,
+        "ALPHA": 1.0 * market + rng.normal(0.0008, 0.004, n),   # real own trend
+        "NOISE": 1.0 * market + rng.normal(0.0, 0.004, n),
+    }
+    bars = {}
+    for name, r in series.items():
+        px = 100 * np.exp(np.cumsum(r))
+        bars[name] = pd.DataFrame({"open": px, "high": px, "low": px,
+                                   "close": px, "volume": 1e6}, index=idx)
+    panel = Panel.from_bars(bars)
+
+    weights = get_xs_strategy("Residual momentum")(
+        beta_window=250, formation=120, skip=5, top_n=1,
+        dollar_neutral=False, rebalance_every=21).generate_weights(panel)
+    held = weights[weights.sum(axis=1) > 0]
+    assert not held.empty
+    assert (held["ALPHA"] > 0).mean() > (held["BETA2"] > 0).mean(), (
+        "ranked the leveraged market copy over the genuine residual trend")
+
+
+def test_cluster_mean_reversion_is_dollar_neutral():
+    panel = make_panel(n=400, symbols=("AAA", "BBB", "CCC", "DDD", "EEE"))
+    weights = get_xs_strategy("Cluster mean reversion")(
+        lookback=5, rebalance_every=5).generate_weights(panel)
+
+    active = weights[weights.abs().sum(axis=1) > 1e-9]
+    assert not active.empty, "never took a position"
+    assert active.sum(axis=1).abs().max() < 1e-9, "book was not dollar-neutral"
+    assert abs(active.abs().sum(axis=1).max() - 1.0) < 1e-6, "gross exposure drifted"
+
+
+def test_cluster_mean_reversion_shorts_the_leader():
+    """The name that ran hardest should be the short."""
+    idx = pd.bdate_range("2021-01-04", periods=60)
+    bars = {}
+    for name, drift in [("UP", 0.02), ("FLAT1", 0.0), ("FLAT2", 0.0), ("DOWN", -0.02)]:
+        px = 100 * np.exp(np.cumsum(np.full(60, drift)))
+        bars[name] = pd.DataFrame({"open": px, "high": px, "low": px,
+                                   "close": px, "volume": 1e6}, index=idx)
+    panel = Panel.from_bars(bars)
+
+    weights = get_xs_strategy("Cluster mean reversion")(
+        lookback=5, rebalance_every=5).generate_weights(panel)
+    row = weights[weights.abs().sum(axis=1) > 1e-9].iloc[-1]
+    assert row["UP"] < 0, "did not short the leader"
+    assert row["DOWN"] > 0, "did not buy the laggard"
+
+
+def test_dollar_neutral_strategies_need_shorting_enabled():
+    panel = make_panel(n=400, symbols=("AAA", "BBB", "CCC", "DDD"))
+    weights = get_xs_strategy("Cluster mean reversion")(lookback=5).generate_weights(panel)
+
+    blocked = run_panel_backtest(panel, weights, PanelConfig(allow_short=False))
+    allowed = run_panel_backtest(panel, weights, PanelConfig(allow_short=True))
+    assert (blocked.weights >= -1e-9).all().all()
+    assert (allowed.weights < -1e-9).any().any(), "shorts never materialised"
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

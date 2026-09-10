@@ -41,16 +41,33 @@ UNIVERSES = {
 }
 
 
-def describe(stats: dict, turnover: float = 0.0, tstat: float | None = None) -> str:
+def describe(stats: dict, turnover: float = 0.0, tstat: float | None = None,
+             own_t: float | None = None) -> str:
     line = (f"{stats.get('Total return', 0) * 100:>9.2f}% "
             f"{stats.get('CAGR', 0) * 100:>8.2f}% "
             f"{stats.get('Sharpe', 0):>8.2f} "
             f"{stats.get('Max drawdown', 0) * 100:>9.2f}% "
             f"{turnover:>9.2f}x")
-    if tstat is None:
-        return line + f"{'':>9}"
-    flag = "*" if abs(tstat) >= 2.0 else " "
-    return line + f"{tstat:>8.2f}{flag}"
+    line += f"{'':>9}" if tstat is None else (
+        f"{tstat:>8.2f}{'*' if abs(tstat) >= 2.0 else ' '}")
+    line += f"{'':>9}" if own_t is None else (
+        f"{own_t:>8.2f}{'*' if abs(own_t) >= 2.0 else ' '}")
+    return line
+
+
+def own_tstat(equity: pd.Series) -> float:
+    """Is this strategy's own mean daily return distinguishable from zero?
+
+    The right question for a dollar-neutral book. Comparing a market-neutral
+    strategy to a long-only basket penalises it for the market exposure it
+    deliberately does not take -- it can be a perfectly good standalone return
+    stream and still lose that comparison every time.
+    """
+    returns = equity.pct_change().dropna()
+    if len(returns) < 30:
+        return 0.0
+    sd = returns.std(ddof=1)
+    return 0.0 if sd <= 0 else float(returns.mean() / (sd / len(returns) ** 0.5))
 
 
 def paired_tstat(strategy_equity: pd.Series, benchmark_equity: pd.Series) -> float:
@@ -100,6 +117,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--split", type=float, default=0.0,
                    help="fraction of history to use as an in-sample window; the "
                         "rest is reported separately as held-out")
+    p.add_argument("--allow-short", action="store_true",
+                   help="required by the dollar-neutral strategies")
     p.add_argument("--benchmark", default="SPY")
     p.add_argument("--save", metavar="PATH")
     return p
@@ -140,7 +159,8 @@ def main(argv=None) -> int:
     except Exception:  # noqa: BLE001
         print(f"  ({args.benchmark} benchmark unavailable)")
 
-    cfg = PanelConfig(initial_cash=args.cash, slippage_bps=args.slippage_bps)
+    cfg = PanelConfig(initial_cash=args.cash, slippage_bps=args.slippage_bps,
+                      allow_short=args.allow_short)
 
     windows = [("Full period", 0, len(panel))]
     if 0 < args.split < 1:
@@ -156,8 +176,8 @@ def main(argv=None) -> int:
         print(f"\n{'=' * 78}\n{label}: {window.index[0]:%Y-%m-%d} to "
               f"{window.index[-1]:%Y-%m-%d} ({len(window):,} bars)\n{'=' * 78}")
         print(f"{'strategy':<30}{'return':>10}{'CAGR':>9}{'sharpe':>9}"
-              f"{'max DD':>10}{'turnover':>10}{'t vs EW':>9}")
-        print("-" * 87)
+              f"{'max DD':>10}{'turnover':>10}{'t vs EW':>9}{'t vs 0':>9}")
+        print("-" * 96)
 
         # the equal-weight basket is the yardstick a ranking has to clear
         ew_equity = None
@@ -181,7 +201,8 @@ def main(argv=None) -> int:
 
             tstat = (None if name == "Equal weight all" or ew_equity is None
                      else paired_tstat(result.equity, ew_equity))
-            print(f"{name:<30}{describe(stats, result.annual_turnover, tstat)}")
+            print(f"{name:<30}"
+                  f"{describe(stats, result.annual_turnover, tstat, own_tstat(result.equity))}")
             rows.append({"window": label, "strategy": name,
                          "t_vs_equal_weight": tstat,
                          "return_%": stats.get("Total return", 0) * 100,
@@ -195,11 +216,11 @@ def main(argv=None) -> int:
             bench_window = benchmark_equity.iloc[start:end]
             bench_window = bench_window / bench_window.iloc[0] * args.cash
             bstats = equity_stats(bench_window, bars_per_year(bench_window.index))
-            print("-" * 87)
+            print("-" * 96)
             btstat = (None if ew_equity is None
                       else paired_tstat(bench_window, ew_equity))
             print(f"{args.benchmark + ' (buy and hold)':<30}"
-                  f"{describe(bstats, 0.0, btstat)}")
+                  f"{describe(bstats, 0.0, btstat, own_tstat(bench_window))}")
 
     print(f"\n{'=' * 78}")
     print("Reading this honestly:")

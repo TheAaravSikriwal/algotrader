@@ -323,3 +323,108 @@ class PairsTrading(CrossSectionalStrategy):
             weights.iloc[i, weights.columns.get_loc(left)] = 0.5 * position
             weights.iloc[i, weights.columns.get_loc(right)] = -0.5 * position
         return weights
+
+
+@register_xs
+class ResidualMomentum(CrossSectionalStrategy):
+    name = "Residual momentum"
+    description = ("Rank on the part of each stock's return the market does NOT "
+                   "explain. Plain momentum quietly favours high-beta names, so "
+                   "in a rising market it is partly a leveraged index bet; "
+                   "regressing that out leaves stock-specific momentum. "
+                   "Kakushadze and Serur, 151 Trading Strategies, section 3.7.")
+    params = [
+        Param("beta_window", 756, "Beta estimation window (bars)", "int", 120, 1000, 1,
+              help="The paper uses 36 months"),
+        Param("formation", 252, "Formation window (bars)", "int", 40, 500, 1,
+              help="The paper uses 12 months"),
+        Param("skip", 21, "Skip most recent (bars)", "int", 0, 60, 1),
+        Param("top_n", 3, "Names per side", "int", 1, 50, 1),
+        Param("rebalance_every", 21, "Rebalance every (bars)", "int", 1, 126, 1),
+        Param("dollar_neutral", True, "Short the bottom ranks too", "bool"),
+    ]
+
+    def generate_weights(self, panel) -> pd.DataFrame:
+        returns = panel.closes.pct_change()
+        # No Fama-French factors here, so the market proxy is the equal-weighted
+        # universe. A single-factor simplification of the paper's three-factor
+        # regression -- it removes market beta but not size or value tilts.
+        market = returns.mean(axis=1, skipna=True)
+
+        beta_window = int(self.beta_window)
+        cov = returns.rolling(beta_window, min_periods=beta_window // 2).cov(market)
+        var = market.rolling(beta_window, min_periods=beta_window // 2).var()
+        beta = cov.div(var.replace(0, np.nan), axis=0)
+
+        # residual return: what the market did not account for
+        residual = returns.sub(beta.mul(market, axis=0))
+
+        formation, skip = int(self.formation), int(self.skip)
+        mean = residual.rolling(formation, min_periods=formation // 2).mean()
+        sd = residual.rolling(formation, min_periods=formation // 2).std(ddof=1)
+        # risk-adjusted residual return, as of `skip` bars ago
+        scores = (mean / sd.replace(0, np.nan)).shift(skip)
+
+        valid = scores.notna() & panel.tradeable()
+        if not self.dollar_neutral:
+            return self._top_n_weights(scores, valid, int(self.top_n),
+                                       int(self.rebalance_every), ascending=False)
+
+        weights = pd.DataFrame(0.0, index=scores.index, columns=scores.columns)
+        rebalance = self._rebalance_mask(scores.index, int(self.rebalance_every))
+        current = pd.Series(0.0, index=scores.columns)
+        n = int(self.top_n)
+
+        for i in range(len(scores)):
+            if rebalance[i]:
+                row = scores.iloc[i].where(valid.iloc[i]).dropna()
+                current = pd.Series(0.0, index=scores.columns)
+                if len(row) >= 2 * n:
+                    ranked = row.sort_values(ascending=False)
+                    longs, shorts = ranked.head(n).index, ranked.tail(n).index
+                    current[longs] = 0.5 / n
+                    current[shorts] = -0.5 / n
+            weights.iloc[i] = current.to_numpy()
+        return weights
+
+
+@register_xs
+class ClusterMeanReversion(CrossSectionalStrategy):
+    name = "Cluster mean reversion"
+    description = ("Pairs trading generalised past two names. Demean the "
+                   "cluster's returns, then hold each stock in proportion to how "
+                   "far it strayed -- short the leaders, buy the laggards. "
+                   "Dollar-neutral by construction. Kakushadze and Serur, "
+                   "151 Trading Strategies, section 3.9.")
+    params = [
+        Param("lookback", 5, "Return window (bars)", "int", 1, 60, 1,
+              help="Short windows suit this; reversal is a days-to-weeks effect"),
+        Param("rebalance_every", 5, "Rebalance every (bars)", "int", 1, 63, 1),
+        Param("gross", 1.0, "Gross exposure", "float", 0.1, 1.0, 0.1,
+              help="Total of the absolute dollar positions"),
+    ]
+
+    def generate_weights(self, panel) -> pd.DataFrame:
+        closes = panel.closes
+        lookback = int(self.lookback)
+        log_returns = np.log(closes / closes.shift(lookback))
+        demeaned = log_returns.sub(log_returns.mean(axis=1, skipna=True), axis=0)
+        demeaned = demeaned.where(panel.tradeable())
+
+        weights = pd.DataFrame(0.0, index=closes.index, columns=closes.columns)
+        rebalance = self._rebalance_mask(closes.index, int(self.rebalance_every))
+        current = pd.Series(0.0, index=closes.columns)
+        gross = float(self.gross)
+
+        for i in range(len(closes)):
+            if rebalance[i]:
+                row = demeaned.iloc[i].dropna()
+                current = pd.Series(0.0, index=closes.columns)
+                if len(row) >= 3:
+                    scale = row.abs().sum()
+                    if scale > 0:
+                        # positions opposite the deviation; sums to zero, so the
+                        # book is dollar-neutral without an extra constraint
+                        current[row.index] = -gross * row / scale
+            weights.iloc[i] = current.to_numpy()
+        return weights
