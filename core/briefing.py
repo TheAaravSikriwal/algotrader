@@ -60,13 +60,58 @@ class Briefing:
         return render_markdown(self, max_articles)
 
 
+def normalise_articles(frame: pd.DataFrame) -> pd.DataFrame:
+    """Accept either news frame schema and collapse per-symbol duplication.
+
+    `core.news.to_frame` emits one row per (article, symbol) with `headline`
+    and `symbol`; `core.newsfeed.to_frame` emits one row per story with `title`
+    and `symbols`. Feeding the first straight through makes a single article
+    mentioning fourteen ETFs look like fourteen separate events, which would
+    inflate every count the reasoning layer sees.
+    """
+    if frame is None or frame.empty:
+        return pd.DataFrame()
+
+    out = frame.copy()
+    if "title" not in out and "headline" in out:
+        out["title"] = out["headline"]
+    if "title" not in out:
+        return pd.DataFrame()
+    out["title"] = out["title"].fillna("").astype(str)
+    out = out[out["title"].str.strip() != ""]
+    if out.empty:
+        return out
+
+    if "symbols" not in out:
+        out["symbols"] = out["symbol"].astype(str) if "symbol" in out else ""
+
+    stamp = "timestamp" if "timestamp" in out else "session"
+    out[stamp] = pd.to_datetime(out[stamp])
+
+    # one row per story, with the symbols it touched unioned back together
+    grouped = []
+    for (title, _), rows in out.groupby([out["title"], out[stamp].dt.date],
+                                        sort=False):
+        symbols = sorted({s.strip().upper()
+                          for cell in rows["symbols"].astype(str)
+                          for s in cell.split(",") if s.strip()})
+        record = rows.iloc[0].to_dict()
+        record["title"] = title
+        record["symbols"] = ",".join(symbols)
+        record["source_count"] = int(rows.get(
+            "source_count", pd.Series([1] * len(rows))).max())
+        grouped.append(record)
+
+    return pd.DataFrame(grouped)
+
+
 def build_briefing(articles: pd.DataFrame, holdings: pd.Series,
                    bucket: str = "company", symbols: list | None = None,
                    since_days: int = 7, cutoff: str | None = None,
                    context: dict | None = None,
                    drop_reactions: bool = True) -> Briefing:
     """Assemble a packet from scored news and current positions."""
-    frame = articles.copy() if articles is not None else pd.DataFrame()
+    frame = normalise_articles(articles)
 
     if not frame.empty:
         stamp = "timestamp" if "timestamp" in frame else "session"
@@ -78,6 +123,14 @@ def build_briefing(articles: pd.DataFrame, holdings: pd.Series,
         frame = frame[frame[stamp] >= floor]
 
         text_col = "text" if "text" in frame else "title"
+        frame[text_col] = frame[text_col].fillna("").astype(str)
+        frame = frame[frame[text_col].str.strip() != ""]
+        if frame.empty:
+            return Briefing(
+                generated=date.today().isoformat(), bucket=bucket,
+                symbols=list(symbols or []),
+                since=(date.today() - timedelta(days=since_days)).isoformat(),
+                articles=frame, holdings=holdings, context=context or {})
         frame["bucket"] = frame[text_col].astype(str).map(bucket_of)
         frame = frame[frame["bucket"].isin({bucket, "both"})]
 

@@ -261,6 +261,42 @@ def test_markdown_handles_no_events():
     assert "No qualifying events" in text
 
 
+def test_normalises_the_other_news_schema():
+    """core.news emits headline/symbol; the briefing must accept both."""
+    from core.briefing import normalise_articles
+    now = pd.Timestamp.now("UTC").tz_convert(None)
+    other = pd.DataFrame({
+        "timestamp": [now, now],
+        "session": [now, now],
+        "headline": ["OPEC announces output cut", "OPEC announces output cut"],
+        "text": ["OPEC announces output cut", "OPEC announces output cut"],
+        "symbol": ["XLE", "SPY"],
+    })
+    out = normalise_articles(other)
+    assert len(out) == 1, "one article across two symbols became two events"
+    assert out.iloc[0]["title"] == "OPEC announces output cut"
+    assert set(out.iloc[0]["symbols"].split(",")) == {"XLE", "SPY"}
+
+
+def test_blank_titles_are_dropped():
+    from core.briefing import normalise_articles
+    now = pd.Timestamp.now("UTC").tz_convert(None)
+    frame = pd.DataFrame({"timestamp": [now, now], "title": ["", "Real headline"],
+                          "text": ["", "Real headline"], "symbols": ["", "SPY"]})
+    out = normalise_articles(frame)
+    assert len(out) == 1 and out.iloc[0]["title"] == "Real headline"
+
+
+def test_briefing_survives_an_all_blank_frame():
+    from core.briefing import build_briefing
+    now = pd.Timestamp.now("UTC").tz_convert(None)
+    frame = pd.DataFrame({"timestamp": [now], "title": [""], "text": [""],
+                          "symbols": [""]})
+    b = build_briefing(frame, BASE, bucket="macro")
+    assert b.articles.empty
+    assert "No qualifying events" in b.to_markdown()
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):
