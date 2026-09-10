@@ -132,28 +132,59 @@ def build_news_features(scored: pd.DataFrame, bars: pd.DataFrame,
 # ---------------------------------------------------------------------------
 # does the signal actually predict anything?
 # ---------------------------------------------------------------------------
-def forward_returns(bars: pd.DataFrame, horizons=(1, 3, 5, 10, 20)) -> pd.DataFrame:
+def forward_returns(bars: pd.DataFrame, horizons=(1, 3, 5, 10, 20),
+                    benchmark: pd.Series | None = None) -> pd.DataFrame:
     """Return from this bar's close to the close N bars ahead.
+
+    Pass `benchmark` (a close-price series) to measure returns *relative* to it.
+    That matters more than it sounds: over a window where a stock rose 110%,
+    every sentiment bucket shows positive forward returns, and the drift swamps
+    whatever the news was worth. Subtracting the market answers the question you
+    actually care about -- did the news beat simply owning the thing.
 
     Only ever used for *analysis*. Feeding these into a strategy would be
     lookahead of the purest kind.
     """
     close = bars["close"]
-    return pd.DataFrame(
-        {f"fwd_{h}": close.shift(-h) / close - 1.0 for h in horizons},
-        index=bars.index)
+    out = {f"fwd_{h}": close.shift(-h) / close - 1.0 for h in horizons}
+
+    if benchmark is not None and not benchmark.empty:
+        bench = benchmark.reindex(bars.index).ffill()
+        for h in horizons:
+            out[f"fwd_{h}"] = out[f"fwd_{h}"] - (bench.shift(-h) / bench - 1.0)
+
+    return pd.DataFrame(out, index=bars.index)
+
+
+def _welch_t(a: np.ndarray, b: np.ndarray) -> float:
+    """Welch's t between two samples. Returns 0 when it is undefined."""
+    a, b = a[~np.isnan(a)], b[~np.isnan(b)]
+    if len(a) < 3 or len(b) < 3:
+        return 0.0
+    va, vb = a.var(ddof=1) / len(a), b.var(ddof=1) / len(b)
+    denom = np.sqrt(va + vb)
+    return float((a.mean() - b.mean()) / denom) if denom > 0 else 0.0
 
 
 def decay_profile(features: pd.DataFrame, bars: pd.DataFrame,
                   feature: str = "news_sentiment_weighted",
-                  horizons=(1, 3, 5, 10, 20), quantiles: int = 5) -> pd.DataFrame:
+                  horizons=(1, 3, 5, 10, 20), quantiles: int = 5,
+                  benchmark: pd.Series | None = None) -> pd.DataFrame:
     """Mean forward return by feature quantile, at each horizon.
 
     This is how you check the 3-10 day claim against your own data instead of
     trusting a paper. A real signal shows a monotonic spread between the top and
     bottom buckets that fades as the horizon grows; noise shows no pattern.
+
+    The final two rows are the ones that matter:
+
+    * ``top-bottom`` -- the spread between the most and least positive buckets.
+    * ``t-stat`` -- Welch's t on that spread, **corrected for overlap**. Forward
+      windows of h bars share h-1 bars with their neighbours, so the raw t is
+      inflated by roughly sqrt(h); it is divided out here. Treat |t| < 2 as
+      "indistinguishable from noise" regardless of how good the spread looks.
     """
-    fwd = forward_returns(bars, horizons)
+    fwd = forward_returns(bars, horizons, benchmark)
     joined = features.join(fwd, how="inner").dropna(subset=[feature])
     active = joined[joined["news_count"] > 0] if "news_count" in joined else joined
     if len(active) < quantiles * 4:
@@ -176,12 +207,25 @@ def decay_profile(features: pd.DataFrame, bars: pd.DataFrame,
         rows.append(row)
 
     table = pd.DataFrame(rows)
-    if len(table) >= 2:
-        spread = {"bucket": "top-bottom", "n": int(table["n"].sum()),
-                  f"mean_{feature}": np.nan}
-        for h in horizons:
-            col = f"fwd_{h}_%"
-            if col in table:
-                spread[col] = float(table[col].iloc[-1] - table[col].iloc[0])
-        table = pd.concat([table, pd.DataFrame([spread])], ignore_index=True)
-    return table
+    if len(table) < 2:
+        return table
+
+    bucket_ids = sorted(pd.Series(buckets).dropna().unique())
+    bottom = active[buckets == bucket_ids[0]]
+    top = active[buckets == bucket_ids[-1]]
+
+    spread = {"bucket": "top-bottom", "n": int(table["n"].sum()),
+              f"mean_{feature}": np.nan}
+    tstat = {"bucket": "t-stat", "n": np.nan, f"mean_{feature}": np.nan}
+
+    for h in horizons:
+        col, out_col = f"fwd_{h}", f"fwd_{h}_%"
+        if out_col not in table:
+            continue
+        spread[out_col] = float(table[out_col].iloc[-1] - table[out_col].iloc[0])
+        if col in top and col in bottom:
+            # overlapping forward windows share h-1 bars, inflating the raw t
+            raw = _welch_t(top[col].to_numpy(), bottom[col].to_numpy())
+            tstat[out_col] = round(raw / np.sqrt(h), 2)
+
+    return pd.concat([table, pd.DataFrame([spread, tstat])], ignore_index=True)

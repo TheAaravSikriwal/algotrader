@@ -111,7 +111,17 @@ def _write_cache(path: Path, items: list[NewsItem]):
 
 
 def fetch_alpaca_news(symbols: list[str], start: str, end: str,
-                      limit_per_page: int = 50) -> list[NewsItem]:
+                      max_articles: int | None = None) -> list[NewsItem]:
+    """Fetch every article in the window.
+
+    `max_articles` maps to the SDK's `limit`, which is the total across all
+    pages -- **not** a page size. Leaving it None fetches the whole range;
+    setting it to 50 caps the entire multi-year request at 50 articles, which
+    is a very quiet way to get a meaningless backtest.
+
+    alpaca-py paginates internally (its own docstring: "pagination is handled
+    automatically by the SDK"), so there is no page_token loop here.
+    """
     key = os.getenv("ALPACA_API_KEY_ID")
     secret = os.getenv("ALPACA_API_SECRET_KEY")
     if not key or not secret:
@@ -126,38 +136,32 @@ def fetch_alpaca_news(symbols: list[str], start: str, end: str,
         raise NewsError("alpaca-py is not installed -- pip install alpaca-py") from exc
 
     client = NewsClient(key, secret)
+    request = NewsRequest(
+        symbols=",".join(s.upper() for s in symbols),
+        start=pd.Timestamp(start).to_pydatetime(),
+        end=pd.Timestamp(end).to_pydatetime(),
+        limit=max_articles,
+        # Headline and summary are what the scorers read; full article bodies
+        # multiply the payload for no gain.
+        include_content=False,
+    )
+
+    response = client.get_news(request)
+    raw = getattr(response, "data", response)
+    batch = raw.get("news", []) if isinstance(raw, dict) else (raw or [])
+
     out: list[NewsItem] = []
-    page_token = None
-
-    while True:
-        request = NewsRequest(
-            symbols=",".join(s.upper() for s in symbols),
-            start=pd.Timestamp(start).to_pydatetime(),
-            end=pd.Timestamp(end).to_pydatetime(),
-            limit=limit_per_page,
-            include_content=True,
-            page_token=page_token,
-        )
-        response = client.get_news(request)
-        raw = getattr(response, "data", response)
-        batch = raw.get("news", []) if isinstance(raw, dict) else (raw or [])
-
-        for n in batch:
-            out.append(NewsItem(
-                id=str(getattr(n, "id", "")),
-                timestamp=pd.Timestamp(getattr(n, "created_at", None)).to_pydatetime(),
-                symbols=[s.upper() for s in (getattr(n, "symbols", []) or [])],
-                headline=getattr(n, "headline", "") or "",
-                summary=getattr(n, "summary", "") or "",
-                source=getattr(n, "source", "") or "",
-                url=getattr(n, "url", "") or "",
-                author=getattr(n, "author", "") or "",
-            ))
-
-        page_token = getattr(response, "next_page_token", None)
-        if not page_token or not batch:
-            break
-
+    for n in batch:
+        out.append(NewsItem(
+            id=str(getattr(n, "id", "")),
+            timestamp=pd.Timestamp(getattr(n, "created_at", None)).to_pydatetime(),
+            symbols=[s.upper() for s in (getattr(n, "symbols", []) or [])],
+            headline=getattr(n, "headline", "") or "",
+            summary=getattr(n, "summary", "") or "",
+            source=getattr(n, "source", "") or "",
+            url=getattr(n, "url", "") or "",
+            author=getattr(n, "author", "") or "",
+        ))
     return out
 
 

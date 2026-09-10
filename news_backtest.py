@@ -88,21 +88,39 @@ def enrich(symbol: str, args) -> tuple[pd.DataFrame, pd.DataFrame]:
     return bars.join(features), scored_frame_
 
 
-def show_decay(symbol: str, features_bars: pd.DataFrame):
-    table = decay_profile(features_bars, features_bars, horizons=tuple(HORIZONS))
-    print(f"\n--- {symbol}: mean forward return by sentiment bucket ---")
+def show_decay(symbol: str, features_bars: pd.DataFrame,
+               benchmark: pd.Series | None = None):
+    table = decay_profile(features_bars, features_bars, horizons=tuple(HORIZONS),
+                          benchmark=benchmark)
+    label = "excess return vs SPY" if benchmark is not None else "forward return"
+    print(f"\n--- {symbol}: mean {label} by sentiment bucket ---")
     if table.empty:
         print("  not enough news days to bucket")
         return
-    print(table.to_string(index=False, float_format=lambda x: f"{x:,.3f}"))
-    spread = table[table["bucket"] == "top-bottom"]
-    if not spread.empty:
-        row = spread.iloc[0]
-        best = max(HORIZONS, key=lambda h: abs(row.get(f"fwd_{h}_%", 0)))
-        print(f"\n  Widest top-vs-bottom spread at {best} day(s): "
-              f"{row.get(f'fwd_{best}_%', 0):+.3f}%")
-        print("  A real signal widens then fades. A flat row across every horizon "
-              "is noise.")
+
+    print(table.to_string(index=False, float_format=lambda x: f"{x:,.3f}",
+                          na_rep=""))
+
+    spread_rows = table[table["bucket"] == "top-bottom"]
+    tstat_rows = table[table["bucket"] == "t-stat"]
+    if spread_rows.empty or tstat_rows.empty:
+        return
+
+    spread, tstats = spread_rows.iloc[0], tstat_rows.iloc[0]
+    significant = [(h, spread.get(f"fwd_{h}_%", 0), tstats.get(f"fwd_{h}_%", 0))
+                   for h in HORIZONS
+                   if abs(tstats.get(f"fwd_{h}_%", 0) or 0) >= 2.0]
+
+    if significant:
+        print("\n  Statistically distinguishable from noise (|t| >= 2):")
+        for h, value, t in significant:
+            print(f"    {h:>2} day(s): {value:+.3f}%  (t = {t:+.2f})")
+    else:
+        best = max(HORIZONS, key=lambda h: abs(tstats.get(f"fwd_{h}_%", 0) or 0))
+        print(f"\n  NO horizon reaches |t| >= 2. Strongest is {best} day(s) at "
+              f"t = {tstats.get(f'fwd_{best}_%', 0):+.2f}.")
+        print("  Whatever spread you see above is within what random buckets "
+              "would produce.")
 
 
 def sweep_horizons(symbol: str, enriched: pd.DataFrame, args):
@@ -136,6 +154,22 @@ def sweep_horizons(symbol: str, enriched: pd.DataFrame, args):
     if best["sharpe"] <= bh["Sharpe"]:
         print("  ...which still does not beat doing nothing. That is a result, "
               "not a bug.")
+
+    # A "winner" that holds continuously has stopped being a news strategy and
+    # become an expensive imitation of buy-and-hold.
+    if best["time_in_mkt_%"] > 95 or best["trades"] < 10:
+        print(f"  WARNING: that setting holds {best['time_in_mkt_%']:.0f}% of the "
+              f"time across {int(best['trades'])} trade(s).")
+        print("  It has degenerated into buy-and-hold -- the news signal is not "
+              "driving it,\n  and a handful of trades cannot support any "
+              "conclusion either way.")
+
+    tradeable = table[(table["trades"] >= 20) & (table["time_in_mkt_%"] < 95)]
+    if not tradeable.empty:
+        pick = tradeable.loc[tradeable["sharpe"].idxmax()]
+        print(f"  Best setting that actually trades: {int(pick['hold_bars'])} bars, "
+              f"{pick['return_%']:+.2f}% over {int(pick['trades'])} trades "
+              f"(Sharpe {pick['sharpe']:.2f})")
     return table
 
 
@@ -150,6 +184,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--scorer", default="lexicon", choices=["lexicon", "finbert"])
     p.add_argument("--carry-forward", type=int, default=0,
                    help="keep a day's news features alive for N extra bars")
+    p.add_argument("--benchmark", default="SPY",
+                   help="measure excess returns against this symbol; "
+                        "pass an empty string for raw returns")
 
     p.add_argument("--decay", action="store_true", help="forward-return profile")
     p.add_argument("--sweep-horizons", action="store_true")
@@ -187,8 +224,13 @@ def main(argv=None) -> int:
                 enriched, scored = enrich(symbol, args)
                 enriched_by_symbol[symbol] = enriched
                 days = int((enriched["news_count"] > 0).sum())
-                print(f"{symbol}: {len(enriched):,} bars, {len(scored):,} articles "
-                      f"on {days:,} days ({args.scorer} scorer)")
+                # `scored` holds one row per (article, symbol) pair, so count
+                # only the rows belonging to this symbol
+                n_articles = int((scored["symbol"] == symbol).sum())
+                coverage = days / len(enriched) * 100 if len(enriched) else 0
+                print(f"{symbol}: {len(enriched):,} bars, {n_articles:,} articles "
+                      f"on {days:,} days ({coverage:.0f}% of bars, "
+                      f"{args.scorer} scorer)")
             except (NewsError, Exception) as exc:  # noqa: BLE001
                 print(f"{symbol}: skipped -- {exc}")
 
@@ -196,9 +238,19 @@ def main(argv=None) -> int:
         print("\nNothing to analyse. Add Alpaca keys to .env, or try --demo.")
         return 1
 
+    benchmark = None
+    if args.benchmark and not args.demo:
+        try:
+            benchmark = load_bars(args.benchmark, args.start, args.end,
+                                  "1Day", args.source)["close"]
+            print(f"\nMeasuring excess returns against {args.benchmark}.")
+        except Exception as exc:  # noqa: BLE001
+            print(f"\nBenchmark {args.benchmark} unavailable ({exc}); "
+                  "reporting raw returns.")
+
     for symbol, enriched in enriched_by_symbol.items():
         if args.decay:
-            show_decay(symbol, enriched)
+            show_decay(symbol, enriched, benchmark)
         if args.sweep_horizons:
             sweep_horizons(symbol, enriched, args)
 

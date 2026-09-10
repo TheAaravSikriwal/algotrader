@@ -60,6 +60,13 @@ def check_env():
     paper_secret = os.getenv("ALPACA_API_SECRET_KEY")
     if paper_key and paper_secret:
         record(OK, f"paper keys present ({paper_key[:6]}...)")
+        # Alpaca conventionally issues paper key IDs beginning "PK" and live
+        # ones beginning "AK". Only a hint -- the endpoint is the real judge --
+        # but it catches the most common setup mistake before the 401 does.
+        if not paper_key.upper().startswith("PK"):
+            record(WARN, f"paper key starts with '{paper_key[:2]}', not 'PK' -- "
+                         "this looks like a LIVE key in the paper slot. "
+                         "Generate keys with the dashboard switched to Paper Trading.")
     else:
         record(BAD, "paper keys missing -- set ALPACA_API_KEY_ID and "
                     "ALPACA_API_SECRET_KEY in .env")

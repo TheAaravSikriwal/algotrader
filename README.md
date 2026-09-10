@@ -228,6 +228,75 @@ concrete version of the research finding that news signals are near-zero at one
 day and peak at 3–10 — and the reason fast in-and-out news trading is the
 version most likely to lose.
 
+## Cross-sectional strategies
+
+```bash
+python panel_backtest.py --universe sectors --split 0.6
+python panel_backtest.py --symbols AAPL,MSFT,NVDA,JNJ,KO,XOM,JPM,PG --top-n 3
+```
+
+The single-symbol engine answers *"should I be long SPY today?"*. The panel
+engine answers *"of these 100 stocks, which 10 should I hold?"* — which is the
+shape of the best-replicated findings in finance. Those cannot be expressed one
+symbol at a time, because the signal **is** the comparison between names.
+
+Five strategies ship: cross-sectional momentum, low volatility, cross-sectional
+reversal, inverse volatility, and equal-weight (the benchmark).
+
+### Two things that make these results honest
+
+**Equal-weight is the benchmark, not SPY.** Beating SPY may only mean your
+universe outperformed. Beating an equal-weighted basket of the *same universe*
+is the only way to show the ranking added something.
+
+**The `t vs EW` column.** A paired t-test on daily return differences against
+the equal-weight basket. Without it, comparing Sharpe ratios by eye manufactures
+findings — see below.
+
+### What it found
+
+Out-of-sample (2022–2026), cross-sectional momentum beat equal-weight in all
+four universes tested, on both return and Sharpe. It looked like a result.
+
+It isn't. The t-stats were **−0.01, +0.31, +0.59, +0.34** — nothing near the
+|t| ≥ 2 threshold. The four universes are correlated views of one market period,
+so "4 for 4" is closer to one observation than four.
+
+The sectors run is the clearest lesson: momentum showed Sharpe 0.88 vs 0.72 and
+a higher total return, with a t-stat of **−0.01**. Its daily return advantage
+was exactly zero; the entire Sharpe gap came from lower volatility.
+
+One caveat in the other direction: this test asks *"does it earn more per day?"*,
+not *"is it better risk-adjusted?"*. Momentum did show consistently smaller
+drawdowns. Testing whether that is significant needs a Sharpe-difference test,
+which is not built yet.
+
+### Two findings worth keeping
+
+**Dual momentum (Antonacci GEM) fails its own thesis.** The absolute-momentum
+filter exists to sidestep bear markets. Run over 2007–2015 it posted a
+**−54.5% drawdown — worse than equal-weighting's −36.6%.** On a 2022–2026
+window alone it looked strong (t = 1.62, the best figure this project ever
+produced); extending the history through an actual crisis erased it. A
+promising result on a window that excludes the event a strategy claims to
+handle is not evidence.
+
+**Two strategies are significantly *worse* than equal-weighting.** Pairs
+trading (t = −2.94) and low volatility (t = −2.37) both clear |t| ≥ 2 in the
+wrong direction. Pairs trading showed Sharpe 1.41 on a 4-year window and
+returned **−10.6%** on the 11-year holdout — the high Sharpe was a
+low-volatility artifact of a short sample.
+
+Across 22 strategies, nothing has significantly beaten equal-weighting.
+
+### Survivorship
+
+`Panel.survivorship_warning()` flags what it can detect, but it cannot fix the
+core problem: a universe you picked today excludes everything that went bankrupt
+or got delisted. The `megacap` universe is the worst offender — its equal-weight
+basket returned 174% out-of-sample against SPY's 71%, because the *universe* was
+chosen knowing who won. Momentum within a basket of known winners means little.
+
 ## Reading the output honestly
 
 A few things worth internalising before you trust any number on the dashboard:
