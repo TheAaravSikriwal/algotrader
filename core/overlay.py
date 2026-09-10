@@ -218,15 +218,19 @@ def apply_overlay(base: pd.Series, overlay: Overlay, as_of=None,
 # ---------------------------------------------------------------------------
 # the ledger
 # ---------------------------------------------------------------------------
-def record(overlay: Overlay, path: Path = LEDGER) -> Overlay:
+def record(overlay: Overlay, path: Path | None = None) -> Overlay:
     """Journal an overlay at issue time, before any outcome is known."""
+    path = path or LEDGER
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(overlay.to_dict()) + "\n")
     return overlay
 
 
-def load_overlays(path: Path = LEDGER) -> list[Overlay]:
+def load_overlays(path: Path | None = None) -> list[Overlay]:
+    # resolved at call time, not bound as a default -- a module constant used
+    # as a default argument freezes at import and cannot be redirected
+    path = path or LEDGER
     if not path.exists():
         return []
     out = []
@@ -241,13 +245,13 @@ def load_overlays(path: Path = LEDGER) -> list[Overlay]:
 
 
 def active_overlays(as_of=None, bucket: str | None = None,
-                    path: Path = LEDGER) -> list[Overlay]:
+                    path: Path | None = None) -> list[Overlay]:
     as_of = as_of or date.today()
     return [o for o in load_overlays(path)
             if o.active_on(as_of) and (bucket is None or o.bucket == bucket)]
 
 
-def ledger_frame(path: Path = LEDGER) -> pd.DataFrame:
+def ledger_frame(path: Path | None = None) -> pd.DataFrame:
     """One row per adjustment, for review and later scoring."""
     rows = []
     for overlay in load_overlays(path):
