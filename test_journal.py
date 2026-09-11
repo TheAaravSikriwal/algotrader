@@ -63,10 +63,10 @@ def test_benjamini_hochberg_handles_empty():
 # ---------------------------------------------------------------------------
 # the ledger
 # ---------------------------------------------------------------------------
-def make_experiment(strategy="X", tstat=1.0, obs=1000, **kw):
+def make_experiment(strategy="X", tstat=1.0, obs=1000, metrics=None, **kw):
     return Experiment(hypothesis="h", strategy=strategy, symbols=["SPY"],
                       start="2015-01-01", end="2025-01-01",
-                      metrics={"return_%": 10.0, "sharpe": 0.5},
+                      metrics={"return_%": 10.0, "sharpe": 0.5, **(metrics or {})},
                       tstat=tstat, observations=obs, **kw)
 
 
@@ -158,11 +158,21 @@ def test_forward_test_registers_and_is_not_ready_immediately():
 
 
 def test_forward_test_becomes_ready_after_enough_time():
+    """An aged record already on disk, as if registered months ago. Written
+    directly rather than through register(), which now refuses past dates --
+    loading history is legitimate, creating backdated history is not."""
+    from dataclasses import asdict
+
+    from core.journal import _append
+
     journal, tmp = temp_journal()
     old = (date.today() - timedelta(days=200)).isoformat()
-    journal.register(ForwardTest(hypothesis="h", strategy="X", symbols=["SPY"],
-                                 min_days=180, registered=old))
+    _append(journal.forward_path,
+            asdict(ForwardTest(hypothesis="h", strategy="X", symbols=["SPY"],
+                               min_days=180, registered=old)))
+
     assert len(journal.ready_forward_tests()) == 1
+    assert journal.forward_tests()[0].registered == old, "the date was rewritten"
     shutil.rmtree(tmp, ignore_errors=True)
 
 
@@ -194,6 +204,78 @@ def test_registration_date_is_locked_at_creation():
     test = ForwardTest(hypothesis="h", strategy="X", symbols=["SPY"])
     assert test.registered == date.today().isoformat()
     assert test.id, "a forward test must be identifiable"
+
+
+def test_unrecorded_parameter_sweeps_raise_the_bar():
+    """A tournament that evaluated 500 settings has looked at the data 500
+    times. A bar computed from the one recorded hypothesis is calibrated on a
+    fraction of the search, and everything that 'failed' failed too easily."""
+    journal, _ = temp_journal()
+    journal.record(make_experiment(tstat=1.0,
+                                   metrics={"combinations_searched": 0}))
+    lenient = journal.bar()
+
+    journal.record(make_experiment(strategy="Swept", tstat=1.0,
+                                   metrics={"combinations_searched": 500}))
+    strict = journal.bar()
+
+    assert journal.searches() == 500
+    assert journal.total_looks() > 500
+    assert strict > lenient + 0.5, (
+        f"bar barely moved: {lenient:.2f} -> {strict:.2f} after 500 more looks")
+
+
+def test_repeating_one_experiment_does_not_manufacture_discoveries():
+    """Benjamini-Hochberg's cutoff rises with rank, so duplicate small
+    p-values inflate the discovery count."""
+    journal, _ = temp_journal()
+    finding = make_experiment(strategy="TheFinding", tstat=4.2)
+    for _ in range(5):
+        journal.record(finding)
+    for i in range(9):
+        journal.record(make_experiment(strategy=f"Null{i}", tstat=0.2))
+
+    frame = journal.frame()
+    assert len(frame) == 10, f"frame kept {len(frame)} rows for 10 hypotheses"
+    assert int(frame["survives_fdr"].sum()) <= 1, (
+        f"{int(frame['survives_fdr'].sum())} discoveries from one finding "
+        "logged five times")
+
+
+def test_a_forward_test_cannot_be_backdated():
+    """The entire value of a forward test is that its date was fixed before
+    the outcome existed."""
+    journal, _ = temp_journal()
+    backdated = ForwardTest(hypothesis="backdated", strategy="Buy and hold",
+                            symbols=["SPY"], registered="2015-01-01")
+    assert backdated.ready, "fixture is not actually backdated"
+    try:
+        journal.register(backdated)
+        raise AssertionError("registered a forward test dated in the past")
+    except ValueError as exc:
+        assert "past" in str(exc).lower()
+
+
+def test_the_same_spec_is_a_duplicate_on_any_day():
+    """With the date in the id seed, re-registering tomorrow looked new and
+    the duplicate guard never fired."""
+    today = date.today().isoformat()
+    tomorrow = (date.today() + timedelta(days=1)).isoformat()
+    a = ForwardTest(hypothesis="x", strategy="Buy and hold", symbols=["SPY"],
+                    registered=today)
+    b = ForwardTest(hypothesis="worded differently", strategy="Buy and hold",
+                    symbols=["SPY"], registered=tomorrow)
+    assert a.id == b.id, (
+        "the same spec registered on two days produced two ids, so the "
+        "duplicate guard never fires")
+
+    journal, _ = temp_journal()
+    journal.register(a)
+    try:
+        journal.register(b)
+        raise AssertionError("registered the same spec twice")
+    except ValueError:
+        pass
 
 
 if __name__ == "__main__":

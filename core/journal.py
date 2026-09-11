@@ -173,7 +173,10 @@ class ForwardTest:
         if not self.registered:
             self.registered = date.today().isoformat()
         if not self.id:
-            seed = f"{self.strategy}|{sorted(self.params.items())}|{self.symbols}|{self.registered}"
+            # The date is deliberately NOT in the seed. With it, the same spec
+            # registered on two different days produced two different ids and
+            # the duplicate guard never fired.
+            seed = f"{self.strategy}|{sorted(self.params.items())}|{sorted(self.symbols)}"
             self.id = hashlib.sha1(seed.encode()).hexdigest()[:12]
 
     @property
@@ -223,16 +226,41 @@ class Journal:
         """Distinct hypotheses tested -- re-running the same spec is not a new look."""
         return len({e.id for e in self.experiments()})
 
+    def searches(self) -> int:
+        """Parameter combinations evaluated but never recorded as hypotheses.
+
+        A tournament sweeps hundreds of settings per strategy per symbol and
+        reports the best. Each of those is a look at the same data, and a bar
+        computed from the handful of *recorded* hypotheses is calibrated on a
+        fraction of the real search -- which makes everything that "failed"
+        fail against a threshold that was far too lenient.
+        """
+        return sum(int(e.metrics.get("combinations_searched", 0) or 0)
+                   for e in self.experiments())
+
+    def total_looks(self) -> int:
+        """Every look at the data, recorded hypotheses and sweeps alike."""
+        return max(self.count(), 1) + self.searches()
+
     def bar(self, alpha: float = 0.05) -> float:
-        """The |t| a new result must clear, given everything tested so far."""
-        return bonferroni_bar(max(self.count(), 1), alpha)
+        """The |t| a new result must clear, given everything tried so far."""
+        return bonferroni_bar(self.total_looks(), alpha)
 
     def frame(self, alpha: float = 0.05) -> pd.DataFrame:
-        records = self.experiments()
+        # Deduplicate by id, as `count` does. Feeding repeated rows to
+        # Benjamini-Hochberg inflates its discovery count: identical small
+        # p-values raise the rank cutoff, so logging one real finding five
+        # times reported five discoveries.
+        seen, records = set(), []
+        for e in self.experiments():
+            if e.id in seen:
+                continue
+            seen.add(e.id)
+            records.append(e)
         if not records:
             return pd.DataFrame()
 
-        bar = bonferroni_bar(len({e.id for e in records}), alpha)
+        bar = self.bar(alpha)
         rows = []
         for e in records:
             rows.append({
@@ -270,6 +298,19 @@ class Journal:
 
     # -- forward tests ----------------------------------------------------
     def register(self, test: ForwardTest) -> ForwardTest:
+        # The whole value of a forward test is that its date was fixed before
+        # the outcome existed. `registered` is an ordinary field, so a caller
+        # could set it to 2015 and have the test score immediately against
+        # "genuinely unseen data". The check lives here rather than in the
+        # constructor because loading a historical record from the ledger
+        # legitimately reconstructs one with a past date.
+        today = date.today().isoformat()
+        if test.registered < today:
+            raise ValueError(
+                f"cannot register a forward test dated {test.registered}: that "
+                "is in the past, and a forward test is only worth anything if "
+                "the outcome did not exist when it was written.")
+
         existing = {t.id for t in self.forward_tests()}
         if test.id in existing:
             raise ValueError(f"forward test {test.id} is already registered")

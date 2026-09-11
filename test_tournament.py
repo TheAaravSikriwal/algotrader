@@ -164,6 +164,41 @@ def test_tournament_survives_a_broken_strategy():
     assert not table.empty, "one broken strategy killed the whole tournament"
 
 
+def test_boolean_params_are_not_counted_as_edges():
+    """A bool axis is [False, True], so every value sits at an edge and the
+    measure says nothing. Counting them meant one bool put a strategy at 0.5
+    and a single-bool strategy at 1.0, excluded unconditionally by leaders()."""
+    from core.tournament import edge_fraction
+
+    grid = [{"fast": f, "use_ema": e}
+            for f in (10, 20, 30, 40) for e in (False, True)]
+
+    interior = edge_fraction({"fast": 20, "use_ema": True}, grid)
+    assert interior == 0.0, (
+        f"a mid-grid numeric with a bool scored {interior} -- the bool counted")
+
+    pinned = edge_fraction({"fast": 40, "use_ema": False}, grid)
+    assert pinned == 1.0, "a genuinely pinned numeric was not flagged"
+
+    only_bools = edge_fraction({"use_ema": True}, [{"use_ema": b}
+                                                   for b in (False, True)])
+    assert only_bools == 0.0, "a bool-only strategy was scored as all-edge"
+
+
+def test_the_tournament_reports_how_much_it_searched():
+    """Reporting the best of hundreds of combinations as one result is how the
+    significance bar ends up calibrated on a fraction of the real search."""
+    df = synth(900)
+    result = walk_forward(df, get_strategy("SMA crossover"), "SPY",
+                          wf=WalkForwardConfig(train_bars=250, test_bars=100,
+                                               max_grid=12))
+    assert result is not None
+    # at least one full grid sweep per fold
+    assert result.combinations_searched >= 12 * len(result.folds) * 0.5, (
+        f"reported only {result.combinations_searched} combinations across "
+        f"{len(result.folds)} folds")
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

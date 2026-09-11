@@ -64,6 +64,7 @@ class WalkForwardResult:
     stats: dict
     param_stability: float         # 0..1, how often the chosen params stayed put
     edge_fraction: float = 0.0     # 0..1, share of chosen params pinned to a grid edge
+    combinations_searched: int = 0  # every parameter set evaluated, across folds
 
     @property
     def chosen_params(self) -> dict:
@@ -124,15 +125,23 @@ def edge_fraction(params: dict, grid: list[dict]) -> float:
     """
     if not params or not grid:
         return 0.0
-    at_edge = 0
+
+    at_edge, counted = 0, 0
     for name, value in params.items():
         axis = sorted({c[name] for c in grid if name in c},
                       key=lambda v: (v is True, v))
-        if len(axis) < 2:
+        # A boolean axis is [False, True], so *every* value sits at an edge and
+        # the measure says nothing. Counting them meant a strategy with one
+        # bool started at 0.5 and a single-bool strategy scored 1.0, which
+        # `leaders` then excluded unconditionally. Only ordered axes with room
+        # to be interior can be pinned.
+        if len(axis) < 3 or all(isinstance(v, bool) for v in axis):
             continue
+        counted += 1
         if value in (axis[0], axis[-1]):
             at_edge += 1
-    return at_edge / max(len(params), 1)
+
+    return at_edge / counted if counted else 0.0
 
 
 def _score(equity: pd.Series, metric: str, ppy: float) -> float:
@@ -158,6 +167,7 @@ def walk_forward(df: pd.DataFrame, cls: type[Strategy], symbol: str = "",
 
     ppy = bars_per_year(df.index)
     results: list[FoldResult] = []
+    searched = 0                   # every look at the data, for the journal
 
     for i, (tr_s, tr_e, te_s, te_e) in enumerate(folds_idx):
         train = df.iloc[tr_s:tr_e]
@@ -169,6 +179,7 @@ def walk_forward(df: pd.DataFrame, cls: type[Strategy], symbol: str = "",
                 res = run_backtest(train, strat.generate_signals(train), backtest)
             except Exception:  # noqa: BLE001 -- a bad combo must not sink the sweep
                 continue
+            searched += 1
             score = _score(res.equity, wf.rank_metric, ppy)
             if score > best_score:
                 best_params, best_score = params, score
@@ -207,6 +218,7 @@ def walk_forward(df: pd.DataFrame, cls: type[Strategy], symbol: str = "",
         strategy=cls.name, symbol=symbol.upper(), folds=results,
         equity=equity, stats=equity_stats(equity, ppy), param_stability=stability,
         edge_fraction=edge_fraction(results[-1].params, grid),
+        combinations_searched=searched,
     )
 
 
@@ -246,6 +258,10 @@ def run_tournament(data: dict[str, pd.DataFrame], strategies: list[type[Strategy
                 "fold_win_rate": float(np.mean([f.out_of_sample > 0 for f in res.folds])),
                 "param_stability": res.param_stability,
                 "params_at_edge": res.edge_fraction,
+                # Carried so the research journal can count the real search.
+                # Reporting the best of 500 combinations as one result is how a
+                # Bonferroni bar ends up calibrated on a fraction of the looks.
+                "combinations_searched": res.combinations_searched,
                 "params": res.chosen_params,
             })
 
