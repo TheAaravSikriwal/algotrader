@@ -45,6 +45,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--with-news", action="store_true",
                    help="measure coverage too (needs Alpaca keys, and is slow)")
     p.add_argument("--news-days", type=int, default=90)
+    p.add_argument("--as-of", metavar="YYYY-MM-DD",
+                   help="screen using only data up to this date. Set it to the "
+                        "start of the backtest that follows -- without it, "
+                        "volatility and range are measured over the very "
+                        "window you are about to test on.")
     p.add_argument("--save", metavar="PATH")
     return p
 
@@ -98,7 +103,14 @@ def main(argv=None) -> int:
         print(f"  measuring news coverage over {args.news_days} days...")
         news_counts, news_profiles = gather_news(list(bars), args.news_days)
 
-    frame = profile_frame(bars, news_counts, args.window, news_profiles)
+    if not args.as_of:
+        print("  NOTE: screening as of today. Volatility and daily range are\n"
+              "  therefore measured over whatever window you backtest next,\n"
+              "  which flatters the result. Pass --as-of with the backtest's\n"
+              "  start date to screen on what was knowable then.\n")
+
+    frame = profile_frame(bars, news_counts, args.window, news_profiles,
+                          as_of=args.as_of)
     profiles = sorted(PROFILES) if args.profile == "all" else [args.profile]
     results = {}
 
@@ -156,8 +168,16 @@ def main(argv=None) -> int:
             print(f"  {name:<12} {','.join(picked.index[:12])}"
                   f"{' ...' if len(picked) > 12 else ''}")
 
-    print("\nScreened on tradability only -- no past return entered this. What it")
-    print("cannot fix is the candidate pool: every name in it survived to be")
+    print("\nScreened on tradability only -- no return ranking entered this.")
+    if args.as_of:
+        print(f"Measured as of {args.as_of}, so the universe is one you could")
+        print("actually have picked on that date.")
+    else:
+        print("But measured as of today: realised volatility and daily range are")
+        print("past-return quantities, and relative to a backtest that follows")
+        print("they are FUTURE quantities. Re-run with --as-of before trusting")
+        print("any result built on this universe.")
+    print("Neither fixes the candidate pool: every name in it survived to be")
     print("listed today, so the companies that failed are already missing.")
 
     if args.save and results:

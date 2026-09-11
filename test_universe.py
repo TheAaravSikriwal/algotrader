@@ -125,6 +125,42 @@ def test_top_n_is_honoured():
     assert len(screen(frame, prof)) == 2
 
 
+def test_screening_as_of_a_date_ignores_everything_after_it():
+    """Volatility and range are past-return quantities. Measured from the end
+    of the data they are FUTURE quantities relative to the backtest, and
+    screening on them manufactures a calm-looking equity curve."""
+    rng = np.random.default_rng(3)
+    idx = pd.bdate_range("2022-01-03", periods=800)
+
+    # calm for the first half, violent for the second
+    vol = np.where(np.arange(800) < 400, 0.004, 0.045)
+    px = 100 * np.exp(np.cumsum(rng.normal(0.0, 1.0, 800) * vol))
+    half = vol / 2
+    bars = {"TWOFACED": pd.DataFrame(
+        {"open": px, "high": px * (1 + half), "low": px * (1 - half),
+         "close": px, "volume": np.full(800, 1e7)}, index=idx)}
+
+    cutoff = idx[400]
+    early = metrics_for(bars["TWOFACED"], as_of=cutoff)
+    today = metrics_for(bars["TWOFACED"])
+
+    assert early["ann_vol"] < today["ann_vol"] / 2, (
+        f"as_of={cutoff.date()} saw vol {early['ann_vol']:.3f} but the full "
+        f"history gives {today['ann_vol']:.3f} -- the cutoff was ignored")
+    assert early["range_pct"] < today["range_pct"] / 2
+
+    # and a calm-window screen must not be rescued by the violent future
+    prof = Profile(name="t", rationale="", min_dollar_volume=1.0,
+                   min_history_days=100, max_range_pct=0.02)
+    assert "TWOFACED" in screen(profile_frame(bars, as_of=cutoff), prof).index
+    assert "TWOFACED" not in screen(profile_frame(bars), prof).index
+
+
+def test_as_of_before_any_data_selects_nothing():
+    bars = {"AAA": make_bars(n=400)}
+    assert profile_frame(bars, as_of="2019-01-01").empty
+
+
 def test_screening_never_looks_at_returns():
     """Two names with identical tradability but opposite performance must
     screen identically -- selecting on past returns is survivorship bias."""

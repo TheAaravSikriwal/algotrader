@@ -11,15 +11,26 @@ universe for all of them guarantees at least one is mismatched:
   * **reasoning-driven** rules need news coverage. A company nobody writes
     about cannot be traded on what is written about it.
 
-The rule that keeps this honest: **screen on tradability, never on past
-returns.** Filtering to names that went up is survivorship bias wearing a
-screener's clothes. Liquidity, spread and coverage are constraints on whether a
-trade is executable at all -- they say nothing about whether it will profit,
-which is exactly why they are safe to select on.
+Two rules keep this honest, and the second was learned the hard way.
 
-The residual bias this cannot fix: the candidate pool itself. Screening a list
-of companies that exist today has already excluded everything that went
-bankrupt. Only point-in-time index membership fixes that, and it is not free.
+**Screen on tradability, never on past returns.** Filtering to names that went
+up is survivorship bias wearing a screener's clothes. Liquidity, spread and
+coverage constrain whether a trade is executable at all -- they say nothing
+about whether it will profit, which is why they are safe to select on.
+
+**Screen as of a date, not as of today.** This module used to measure
+everything from the end of the data, which meant realised volatility and daily
+range -- both past-return quantities -- were *future* quantities relative to any
+backtest that followed. Screening `max_range_pct` over the exact window you
+then test on is an extremely effective way to manufacture a calm equity curve,
+and the docstring above claimed the opposite was happening. Pass `as_of` set to
+the backtest's start date so the universe is one you could actually have picked.
+
+Two biases this still cannot fix. The candidate pool contains only companies
+that exist today, so everything that went bankrupt is already missing -- only
+point-in-time index membership solves that. And a single `as_of` screen is
+still a one-off choice; a strategy held for a decade would in practice be
+re-screened periodically, which this does not model.
 """
 from __future__ import annotations
 
@@ -107,9 +118,20 @@ PROFILES = {
 }
 
 
-def metrics_for(df: pd.DataFrame, window: int = 252) -> dict:
-    """Tradability measures for one symbol. No forward-looking quantities."""
-    if df is None or len(df) < 30:
+def metrics_for(df: pd.DataFrame, window: int = 252, as_of=None) -> dict:
+    """Tradability measures for one symbol, as known on `as_of`.
+
+    `as_of` is not optional in spirit. Measured from the end of the data, two
+    of these -- realised volatility and daily range -- are *future* quantities
+    relative to any backtest that follows, and screening on them is a highly
+    effective way to manufacture a calm-looking equity curve. Screen as of the
+    date the backtest starts, so the universe is one you could have chosen.
+    """
+    if df is None or df.empty:
+        return {}
+    if as_of is not None:
+        df = df.loc[:pd.Timestamp(as_of)]
+    if len(df) < 30:
         return {}
 
     recent = df.tail(window)
@@ -139,7 +161,7 @@ def profile_frame(bars: dict[str, pd.DataFrame],
                   news_counts: dict[str, float] | None = None,
                   window: int = 252,
                   news_profiles: dict[str, dict] | None = None,
-                  days: int = 90) -> pd.DataFrame:
+                  days: int = 90, as_of=None) -> pd.DataFrame:
     """One row per symbol: tradability, asset type, and its news category mix.
 
     `news_profiles` carries the per-stock breakdown from
@@ -150,7 +172,7 @@ def profile_frame(bars: dict[str, pd.DataFrame],
 
     rows = []
     for symbol, df in bars.items():
-        stats = metrics_for(df, window)
+        stats = metrics_for(df, window, as_of)
         if not stats:
             continue
         symbol = symbol.upper()
