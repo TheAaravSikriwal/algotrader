@@ -301,6 +301,15 @@ plain("**This is the part that matters.** The test is not whether you made "
     "far too small to read. The test is whether your orders filled, and at "
     "what price.")
 
+st.info(
+    "**One caveat about your account size.** With a $5,000 practice account "
+    "and SPY near $765, a single order works out at one or two shares. That "
+    "is fine for learning the mechanics, but it flatters the very thing "
+    "being measured: a one-share limit order fills far more easily than a "
+    "realistic one, because it can slot into a gap in the queue that a "
+    "hundred shares could not. So read a good fill rate here as an upper "
+    "bound, not a result.")
+
 log = FillLog(trader.fills.path)
 fills = log.frame()
 

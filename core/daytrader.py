@@ -193,6 +193,12 @@ class DayTrader:
                 # pre- and post-market bars by default, and a gap formed at
                 # 04:15 on two hundred shares of volume is not the same object
                 # the rule was measured on.
+                # Never look at a bar stamped later than the moment being
+                # planned for. In live use the newest bar is the current one so
+                # this changes nothing, but it makes the loop honest under
+                # clock skew, and lets a past timestamp be replayed as it
+                # actually looked rather than with the rest of the day visible.
+                bars = bars[bars.index <= pd.Timestamp(now)]
                 today = rth(bars[bars.index.normalize() == pd.Timestamp(now.date())])
                 if len(today) < 3:
                     continue

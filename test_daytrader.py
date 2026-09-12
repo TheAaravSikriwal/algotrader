@@ -324,3 +324,25 @@ def test_only_regular_hours_bars_feed_the_rule():
     ).assign(volume=200.0)
     t, _ = _trader(broker=FakeBroker(bars=pre))
     assert t.plan(now=datetime(2026, 9, 14, 10, 40))["intents"] == []
+
+
+def test_bars_stamped_after_the_planning_moment_are_ignored():
+    """Nothing later than `now` may inform the decision.
+
+    In live use the newest bar is the current one, so this is invisible. It
+    matters under clock skew, and it is what makes replaying a past moment
+    show what was actually visible then rather than the whole day.
+    """
+    bars = _gap_bars()                       # gap confirmed on the third bar
+    later = pd.DataFrame(
+        [(13, 20, 12, 19)],                  # a huge bar that has not happened yet
+        columns=["open", "high", "low", "close"],
+        index=[bars.index[-1] + pd.Timedelta("5min")]).assign(volume=1000.0)
+    t, _ = _trader(broker=FakeBroker(bars=pd.concat([bars, later])))
+
+    # Planning at the gap bar: the future bar is invisible, so the setup stands.
+    at_gap = t.plan(now=bars.index[-1].to_pydatetime())
+    assert len(at_gap["intents"]) == 1
+
+    # Planning one bar later: that bar is now the newest, so the gap is stale.
+    assert t.plan(now=later.index[0].to_pydatetime())["intents"] == []

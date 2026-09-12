@@ -56,6 +56,13 @@ overestimate, and you want to know that before it matters.
 | Entry slippage above 5 bps | The edge is gone by construction. |
 | Under 30 orders | Too early to read anything. The page says so. |
 
+**One caveat about size.** With a $5,000 practice account and SPY near $765,
+the per-order notional cap binds long before the risk rule does, so orders come
+out at one or two shares. That is fine for learning the mechanics, but a
+one-share limit fills far more easily than a realistic one — it can slot into a
+queue gap that a hundred shares could not. Treat a good fill rate as an upper
+bound rather than a result.
+
 **Ignore the profit and loss.** Fifty trades cannot tell a 3 bps edge from
 zero — you would need roughly 2,300 trades, about two years. If the equity
 curve looks good after a week, that is noise, and acting on it is the mistake
