@@ -6,6 +6,17 @@ Two sources, same output shape:
 
 Output is always a DataFrame indexed by tz-naive timestamps with columns
 ``open, high, low, close, volume``.
+
+**The index is US/Eastern wall-clock time, not UTC.** That is the clock every
+trading rule is written in: "the open" means 09:30 on this index, and
+``bars.between_time("09:30", "15:59")`` really is the regular session.
+
+This used to be UTC, which was a trap. Both Alpaca and yfinance hand back
+tz-aware UTC timestamps for intraday bars; dropping the zone without
+converting left 09:30 ET sitting at 13:30 (or 14:30 in winter). A session
+filter written the obvious way then selected pre-market plus the first two
+hours -- about a third of the day's volume -- while looking perfectly
+correct. Use `session()` below rather than hand-rolling the filter.
 """
 from __future__ import annotations
 
@@ -19,6 +30,14 @@ CACHE_DIR = Path(__file__).resolve().parent.parent / "data_cache"
 CACHE_DIR.mkdir(exist_ok=True)
 
 COLUMNS = ["open", "high", "low", "close", "volume"]
+
+EXCHANGE_TZ = "America/New_York"
+
+# The regular US equity session. Bars are stamped at the time they *open*, so
+# the last bar of the day opens at 15:59 and the 16:00 stub, when a feed emits
+# one, belongs to the close auction rather than to continuous trading.
+SESSION_OPEN = "09:30"
+SESSION_LAST_BAR = "15:59"
 
 
 class DataError(RuntimeError):
@@ -38,7 +57,11 @@ def _normalise(df: pd.DataFrame) -> pd.DataFrame:
         raise DataError(f"data source returned no {missing} column(s)")
     df = df[COLUMNS]
     if isinstance(df.index, pd.DatetimeIndex) and df.index.tz is not None:
-        df.index = df.index.tz_convert(None)
+        # Convert to Eastern *before* dropping the zone. tz_convert(None) alone
+        # would silently leave the index in UTC. This also lands Alpaca's daily
+        # bars -- stamped 05:00 UTC in winter, 04:00 in summer -- on midnight,
+        # matching yfinance instead of sitting a few hours off it.
+        df.index = df.index.tz_convert(EXCHANGE_TZ).tz_localize(None)
     df.index = pd.DatetimeIndex(df.index).rename("timestamp")
     df = df[~df.index.duplicated(keep="last")].sort_index()
     df = df.astype(float).dropna(subset=["open", "high", "low", "close"])
@@ -117,6 +140,24 @@ def load_bars(symbol: str, start, end, timeframe: str = "1Day",
     if use_cache:
         df.to_csv(path)
     return df
+
+
+def session(df: pd.DataFrame) -> pd.DataFrame:
+    """Regular trading hours only -- 09:30 through 15:59 Eastern.
+
+    Intraday feeds hand back pre- and post-market bars by default, which is
+    rarely what a rule means by "the open" or "the close". On a normal day this
+    keeps 78 five-minute or 390 one-minute bars.
+
+    Daily bars are returned untouched: they are stamped at midnight, which is
+    outside any session window, so filtering them would throw the lot away.
+    """
+    idx = pd.DatetimeIndex(df.index)
+    if len(idx) == 0:
+        return df
+    if (idx.normalize() == idx).all():
+        return df
+    return df.between_time(SESSION_OPEN, SESSION_LAST_BAR)
 
 
 def clear_cache() -> int:
