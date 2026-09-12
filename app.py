@@ -83,7 +83,7 @@ def main():
 
     st.divider()
     st.markdown("### What to do, in order")
-    plain("You do not need all six. Start at the top and stop once you have "
+    plain("You do not need all of these. Start at the top and stop once you have "
           "your answer.")
 
     left, right = st.columns(2)
@@ -125,6 +125,14 @@ def main():
         plain("The scoreboard: every idea ever tested here and whether it "
               "survived scrutiny.")
         st.page_link("pages/6_Scoreboard.py", label="Scoreboard  →")
+        st.write("")
+
+        step(7, "Day trading (optional, and honest about it)")
+        plain("Fast in-and-out trades on the practice account. **This one is "
+              "not expected to make money** — it is here to find out whether "
+              "orders fill in real life the way the tests assumed. Worth doing "
+              "for that answer alone, but read the warning on the page first.")
+        st.page_link("pages/7_Day_trading.py", label="Day trading  →")
 
     st.divider()
 

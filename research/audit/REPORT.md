@@ -12,6 +12,50 @@ repo file was modified; the 279 tests still pass; nothing was committed.
 
 ---
 
+> ## Correction, 2026-09-12 — §4.2's recommendation does not hold
+>
+> The recommendation below was reimplemented in `core/daytrade.py` and re-run
+> on freshly fetched Eastern-clock bars. **It does not reproduce, and the
+> reason invalidates the recommendation rather than the finding.**
+>
+> This report measured a gross edge over the whole session, then separately
+> recommended restricting to 10:30–15:30 because the spread is cheapest there.
+> Those were two independent measurements, and nothing checked that the edge
+> survived the restriction. It does not
+> (`research/audit/window_sensitivity.py`, 2021–2026, ten symbols):
+>
+> | window | trades | gross bps | t | spread | **net** |
+> |---|---|---|---|---|---|
+> | 09:30–09:45 | 880 | 5.38 | 5.89 | 3.78 | **+1.60** |
+> | 09:30–10:30 | 12,029 | 3.41 | 6.19 | 2.34 | **+1.07** |
+> | full session | 140,879 | 0.91 | 5.80 | 2.10 | **−1.19** |
+> | **10:30–15:30 (recommended)** | 121,631 | 0.67 | 3.85 | 1.59 | **−0.92** |
+> | 11:00–14:00 | 74,349 | 0.75 | 3.22 | 1.59 | **−0.84** |
+> | 15:00–15:55 | 19,328 | 1.31 | 5.31 | 1.79 | **−0.48** |
+>
+> The gross edge is real and strongly significant, but it is concentrated
+> almost entirely in the opening minutes — exactly where the spread is widest.
+> §3.4's 5.43 bps headline matches the first-fifteen-minutes figure almost
+> exactly, which is the tell that this report's sample was dominated by opening
+> trades. **Moving to the cheap window removes the edge along with the cost.**
+>
+> The honest reading is stronger than the original conclusion, not weaker: the
+> edge *is* the spread. Providing liquidity pays roughly what providing
+> liquidity is worth, which is what an efficient market predicts. Even the two
+> positive rows clear a p90 opening spread of 10.6 bps by nothing — at the
+> ninetieth percentile the first-fifteen-minutes variant nets about −5 bps.
+>
+> **What stands:** every finding in Part 3 about the eleven sources, the
+> conclusion that none contains a profitable day-trading rule, the falsification
+> protocol in §4.2, and the infrastructure list. The paper-trading protocol is
+> now *only* an infrastructure and fill-quality test, which is what §4.2's
+> stopping rules already said it was.
+>
+> **What is superseded:** the specific 10:30–15:30 configuration as a
+> candidate for profit, and the "+7–9%/yr gross" expectation built on it.
+
+---
+
 ## Executive summary
 
 1. **Not one of the eleven contains a day-trading rule with a profitable edge at
