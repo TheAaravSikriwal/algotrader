@@ -13,6 +13,7 @@ alpaca-py>=0.21
 
 # optional
 python-dotenv>=1.0
+scikit-learn>=1.4        # the walk-forward logistic strategy; it stands aside without this
 pytest>=8.0
 
 # optional: FinBERT scoring for news (the lexicon scorer needs none of this)
