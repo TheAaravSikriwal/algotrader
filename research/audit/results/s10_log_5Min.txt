@@ -1,0 +1,55 @@
+loading 5Min bars ...
+10 symbols, 14210 symbol-sessions, 1108033 RTH bars
+
+  full_R2_k2_beNone          n= 9508 meanR=+0.1137 win=0.453
+  full_R2_k2_be1.0           n= 9508 meanR=+0.1174 win=0.374
+  full_R2_k3_beNone          n= 5917 meanR=+0.1169 win=0.482
+  full_R2_k3_be1.0           n= 5917 meanR=+0.1192 win=0.420
+  full_R2_k5_beNone          n= 1752 meanR=+0.0938 win=0.527
+  full_R2_k5_be1.0           n= 1752 meanR=+0.0901 win=0.485
+  full_R3_k2_beNone          n= 9508 meanR=+0.0982 win=0.422
+  full_R3_k2_be1.0           n= 9508 meanR=+0.1031 win=0.335
+  full_R3_k3_beNone          n= 5917 meanR=+0.1058 win=0.463
+  full_R3_k3_be1.0           n= 5917 meanR=+0.1099 win=0.395
+  full_R3_k5_beNone          n= 1752 meanR=+0.0800 win=0.518
+  full_R3_k5_be1.0           n= 1752 meanR=+0.0743 win=0.473
+  full_R4_k2_beNone          n= 9508 meanR=+0.1000 win=0.414
+  full_R4_k2_be1.0           n= 9508 meanR=+0.1031 win=0.326
+  full_R4_k3_beNone          n= 5917 meanR=+0.1135 win=0.459
+  full_R4_k3_be1.0           n= 5917 meanR=+0.1155 win=0.390
+  full_R4_k5_beNone          n= 1752 meanR=+0.0852 win=0.515
+  full_R4_k5_be1.0           n= 1752 meanR=+0.0773 win=0.471
+
+source as written: n=5917 trades on 1389 distinct dates, 10 symbols
+
+controls:
+                                                 label     n    mean_R  win_rate  mean_ret_pct      t_ret
+                             model (source as written)  5917  0.113518  0.458509      0.054321   7.136942
+                                     control: fvg_only 14210  0.329373  0.278466      0.054454  10.547434
+                                     control: inverted  6034 -2.480980  0.204342     -0.089709 -16.997095
+                                     control: coinflip  6034 -1.117235  0.329798     -0.014502  -2.210054
+BUG DEMO: resolve from the bar after the intrabar fill  5917  0.087951  0.460199      0.054103   7.079865
+               control: open->close, same session+side  5917       NaN  0.332094     -0.618706 -27.543021
+
+random-entry null (200 draws) ...
+  real mean R = +0.1135
+  null mean   = -0.1711  sd=0.0137  p5=-0.1914 p95=-0.1510
+  real sits at the 100.0th percentile of the random-entry null
+
+cost sweep (round-trip bps of notional):
+ round_trip_bps    n  mean_pct    total_pct  win_rate          t            p
+              0 5917  0.054321   321.415969  0.458509   7.136942 9.543477e-13
+              2 5917  0.034321   203.075969  0.441947   4.509239 6.506067e-06
+              5 5917  0.004321    25.565969  0.414399   0.567684 5.702493e-01
+             10 5917 -0.045679  -270.284031  0.371472  -6.001573 1.954153e-09
+             20 5917 -0.145679  -861.984031  0.293223 -19.140087 0.000000e+00
+             40 5917 -0.345679 -2045.384031  0.182356 -45.417116 0.000000e+00
+
+out of sample:
+                                               label    n   mean_R  win_rate      t_R          p_R
+              source-as-written IN SAMPLE (<2024-06) 3672 0.094146  0.452887 4.161007 3.168479e-05
+         source-as-written OUT OF SAMPLE (>=2024-06) 2245 0.145203  0.467706 2.775613 5.509778e-03
+    best-in-sample cell [full_R2_k2_be1.0] IN SAMPLE 5837 0.121611  0.375364 7.996290 1.332268e-15
+best-in-sample cell [full_R2_k2_be1.0] OUT OF SAMPLE 3671 0.110584  0.372106 6.321926 2.583234e-10
+
+specifications tried: 22; Bonferroni |t| bar = 3.052

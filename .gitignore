@@ -25,3 +25,6 @@ venv/
 *.swp
 .DS_Store
 Thumbs.db
+
+# audit working cache -- 615MB of regenerable Alpaca bars, same rule as data_cache/
+research/audit/cache/

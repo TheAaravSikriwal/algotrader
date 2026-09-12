@@ -1,0 +1,67 @@
+loading 5Min bars ...
+10 symbols, 14210 symbol-sessions
+
+  K5_band70_imp1.5         n= 2472 meanR=+0.0143 win=0.406
+  K5_band70_imp2           n=  693 meanR=-0.0377 win=0.392
+  K5_band70_imp3           n=   49 meanR=-0.0095 win=0.367
+  K5_band80_imp1.5         n= 1847 meanR=+0.0109 win=0.411
+  K5_band80_imp2           n=  551 meanR=-0.0306 win=0.394
+  K5_band80_imp3           n=   49 meanR=-0.1008 win=0.306
+  K5_band90_imp1.5         n=  772 meanR=+0.0166 win=0.400
+  K5_band90_imp2           n=  246 meanR=-0.0160 win=0.394
+  K5_band90_imp3           n=   24 meanR=-0.1699 win=0.333
+  K9_band70_imp1.5         n= 2145 meanR=+0.0096 win=0.407
+  K9_band70_imp2           n=  536 meanR=-0.0390 win=0.397
+  K9_band70_imp3           n=   28 meanR=-0.0183 win=0.357
+  K9_band80_imp1.5         n= 1682 meanR=+0.0015 win=0.405
+  K9_band80_imp2           n=  438 meanR=-0.0364 win=0.397
+  K9_band80_imp3           n=   28 meanR=+0.0653 win=0.393
+  K9_band90_imp1.5         n=  783 meanR=+0.0414 win=0.418
+  K9_band90_imp2           n=  231 meanR=+0.0587 win=0.429
+  K9_band90_imp3           n=   20 meanR=-0.1952 win=0.300
+  K14_band70_imp1.5        n= 1872 meanR=+0.0078 win=0.409
+  K14_band70_imp2          n=  453 meanR=+0.0049 win=0.424
+  K14_band70_imp3          n=   24 meanR=+0.1159 win=0.417
+  K14_band80_imp1.5        n= 1478 meanR=+0.0111 win=0.407
+  K14_band80_imp2          n=  355 meanR=+0.0305 win=0.425
+  K14_band80_imp3          n=   21 meanR=+0.1835 win=0.429
+  K14_band90_imp1.5        n=  774 meanR=+0.0433 win=0.420
+  K14_band90_imp2          n=  205 meanR=+0.0358 win=0.420
+  K14_band90_imp3          n=   13 meanR=+0.0146 win=0.385
+  K21_band70_imp1.5        n= 1631 meanR=+0.0086 win=0.400
+  K21_band70_imp2          n=  396 meanR=+0.0297 win=0.427
+  K21_band70_imp3          n=   23 meanR=+0.1470 win=0.435
+  K21_band80_imp1.5        n= 1299 meanR=-0.0065 win=0.399
+  K21_band80_imp2          n=  301 meanR=+0.0000 win=0.425
+  K21_band80_imp3          n=   19 meanR=+0.0514 win=0.421
+  K21_band90_imp1.5        n=  742 meanR=-0.0357 win=0.389
+  K21_band90_imp2          n=  187 meanR=+0.0312 win=0.422
+  K21_band90_imp3          n=   11 meanR=+0.0942 win=0.364
+
+SLC as written: n=355 trades, 10 symbols
+  drop S: level + confirmation only            n= 1062 meanR=+0.0342
+  drop C: structure + level only               n= 1865 meanR=-0.0340
+  placebo: zones relocated at random           n=  952 meanR=+0.1728
+  self-test: trade AGAINST the level           n=  882 meanR=-0.1802
+  control: same levels, random side            n=  626 meanR=-0.1306
+
+random-entry null (200 draws) ...
+  real mean R = +0.0305; null mean -0.2270 sd 0.0561; real at the 100.0th percentile
+
+cost sweep:
+ round_trip_bps   n  mean_pct   total_pct  win_rate          t        p
+              0 355  0.006998    2.484174  0.425352   0.307272 0.758636
+              2 355 -0.013002   -4.615826  0.411268  -0.570940 0.568040
+              5 355 -0.043002  -15.265826  0.383099  -1.888258 0.058991
+             10 355 -0.093002  -33.015826  0.338028  -4.083788 0.000044
+             20 355 -0.193002  -68.515826  0.264789  -8.474849 0.000000
+             40 355 -0.393002 -139.515826  0.152113 -17.256969 0.000000
+
+out of sample:
+                                           label   n    mean_R  win_rate       t_R      p_R
+                        SLC as written IN SAMPLE 215 -0.034460  0.413953 -0.446573 0.655183
+                    SLC as written OUT OF SAMPLE 140  0.130339  0.442857  1.232327 0.217827
+    best-in-sample [K14_band90_imp1.5] IN SAMPLE 480  0.046001  0.425000  0.823608 0.410162
+best-in-sample [K14_band90_imp1.5] OUT OF SAMPLE 294  0.038761  0.411565  0.549087 0.582946
+
+specifications tried: 41; Bonferroni |t| bar = 3.234

@@ -1,0 +1,2 @@
+n_events,cs_open30_median_bps,cs_midday_median_bps,tick_floor_median_bps,chosen_half_spread_bps,chosen_round_trip_bps,note
+5071,23.016493998173384,1.6906905361971913,13.632428821681016,0.8453452680985957,1.6906905361971913,quotes API unavailable (backend request timeout); CS fallback

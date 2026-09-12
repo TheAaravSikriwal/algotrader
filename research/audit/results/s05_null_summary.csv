@@ -1,0 +1,2 @@
+variant,real_n,real_mean_pct,real_avg_R,null_draws,null_mean_of_means,null_sd_of_means,null_p05,null_p95,real_percentile_mean,real_percentile_R,z_vs_null
+ema|premkt|nextopen|pullback|eod,1924,0.7324343229998892,0.2010122514049198,200,1.159975388206444,0.18693718208425,0.8597884430348728,1.483009199038189,1.5,6.0,-2.2870841447362142

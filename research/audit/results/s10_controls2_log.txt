@@ -1,0 +1,13 @@
+model: limit at FVG midpoint               n= 5917 meanR=+0.1135
+B: strict fill (low < mid, not <=)         n= 5908 meanR=+0.1038
+C: market entry at next bar open           n= 6553 meanR=-0.0090
+A: limit at a RANDOM level, same offsets   n= 5930 meanR=+0.0850
+
+random-level null over 30 draws: mean +0.0828 sd 0.0054 p5 +0.0755 p95 +0.0912
+model mean R = +0.1135; percentile in null = 100.0
+
+                                 variant    n    mean_R      win       t_R          p_R  mean_ret_pct     t_ret  breakeven_bps  median_risk_pct  same_bar_share
+            model: limit at FVG midpoint 5917  0.113518 0.458509  4.669103 3.025173e-06      0.054321  7.136942       5.432077         0.363337        0.054250
+      B: strict fill (low < mid, not <=) 5908  0.103760 0.456669  4.377018 1.203142e-05      0.052906  6.954000       5.290584         0.363472        0.053995
+        C: market entry at next bar open 6553 -0.008969 0.435526 -0.686817 4.921979e-01     -0.007966 -0.975573      -0.796586         0.495567        0.028994
+A: limit at a RANDOM level, same offsets 5930  0.084958 0.451265  5.115172 3.134556e-07      0.048809  6.378592       4.880943         0.374299        0.055818
