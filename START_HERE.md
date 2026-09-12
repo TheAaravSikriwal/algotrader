@@ -93,7 +93,7 @@ The test suite is the fastest check:
 .venv/Scripts/python -m pytest -q
 ```
 
-398 tests. Every fix in this repo was verified by deliberately breaking it
+412 tests. Every fix in this repo was verified by deliberately breaking it
 and confirming a test failed — several times that exposed a test which proved
 nothing, so it is worth trusting a failure here.
 
