@@ -209,3 +209,30 @@ def test_rows_accept_time_objects_as_well_as_strings():
 def test_session_length_reflects_the_short_day():
     assert _cal().session(NORMAL).length.total_seconds() / 3600 == 6.5
     assert _cal().session(HALF).length.total_seconds() / 3600 == 3.5
+
+
+# -- coverage, as distinct from "closed" ---------------------------------
+
+def test_covers_distinguishes_unknown_from_closed():
+    """A holiday inside the range is known-closed; 2030 is simply unknown.
+
+    `is_trading_day` answers False to both, which is how a backtest loop can
+    silently drop years of history while still printing a tidy result.
+    """
+    cal = _cal()
+    assert cal.covers(HOLIDAY) and not cal.is_trading_day(HOLIDAY)
+    assert not cal.covers(date(2030, 6, 3))
+
+
+def test_require_covers_raises_on_a_short_calendar():
+    with pytest.raises(CalendarError, match="fetch a wider range"):
+        _cal().require_covers(date(2021, 1, 4), HALF)
+
+
+def test_require_covers_passes_when_the_range_fits():
+    _cal().require_covers(NORMAL, HALF)
+
+
+def test_require_covers_rejects_an_empty_calendar():
+    with pytest.raises(CalendarError, match="empty"):
+        MarketCalendar().require_covers(NORMAL, HALF)

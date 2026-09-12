@@ -101,7 +101,42 @@ class MarketCalendar:
         return _as_date(day) in self._sessions
 
     def is_trading_day(self, day) -> bool:
+        """True only for a day the calendar positively knows is a session.
+
+        A date outside the loaded range also answers False. That is the honest
+        answer to "is this a trading day" from a calendar that has never heard
+        of it, but a caller looping over history must not treat it as "closed"
+        -- ask `covers` first, or the whole uncovered period disappears without
+        a word.
+        """
         return _as_date(day) in self._sessions
+
+    def covers(self, day) -> bool:
+        """Whether the calendar can speak to this date at all."""
+        if not self._sessions:
+            return False
+        return min(self._sessions) <= _as_date(day) <= max(self._sessions)
+
+    def range(self) -> tuple[Date, Date]:
+        if not self._sessions:
+            raise CalendarError("the calendar is empty")
+        return min(self._sessions), max(self._sessions)
+
+    def require_covers(self, start, end) -> None:
+        """Raise unless the calendar spans `start`..`end`.
+
+        Called before a backtest loop. Skipping uncovered days silently is how
+        four years of history goes missing while the run still prints a
+        plausible-looking result.
+        """
+        if not self._sessions:
+            raise CalendarError("the calendar is empty; fetch it first")
+        lo, hi = self.range()
+        s, e = _as_date(start), _as_date(end)
+        if s < lo or e > hi:
+            raise CalendarError(
+                f"calendar covers {lo} to {hi}, but {s} to {e} was requested; "
+                "fetch a wider range rather than silently skipping the gap")
 
     def session(self, day) -> Session:
         """The session for `day`, or a refusal.
