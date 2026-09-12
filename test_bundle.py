@@ -128,3 +128,21 @@ if __name__ == "__main__":
                 print(f"  ERROR {name}: {type(exc).__name__}: {exc}")
     print("\nall green" if not failures else f"\n{failures} failing")
     raise SystemExit(1 if failures else 0)
+
+
+def test_plain_renders_bold_rather_than_showing_the_stars(monkeypatch):
+    """`plain` emits raw HTML, so Streamlit's markdown never runs on it.
+
+    Without the conversion, "**matters**" reaches the page as literal
+    asterisks -- which is exactly how it shipped the first time.
+    """
+    import streamlit as st
+
+    from core.ui import plain
+
+    captured = []
+    monkeypatch.setattr(st, "markdown", lambda body, **kw: captured.append(body))
+    plain("**This matters.** This does not.")
+
+    assert "<b>This matters.</b>" in captured[0]
+    assert "**" not in captured[0]

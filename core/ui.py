@@ -170,7 +170,17 @@ def step(number: int, title: str, done: bool = False, active: bool = False):
 
 
 def plain(text: str):
-    """A short plain-English lead-in above a section."""
+    """A short plain-English lead-in above a section.
+
+    Emits raw HTML for the styling, which means Streamlit's markdown never
+    runs on it -- so `**bold**` written here would be shown literally, stars
+    and all. Converting the one bit of markdown people reach for is cheaper
+    than expecting every caller to remember that.
+    """
+    import re
+
     import streamlit as st
+
+    text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text, flags=re.S)
     st.markdown(f'<div style="opacity:.75;margin:2px 0 10px">{text}</div>',
                 unsafe_allow_html=True)
