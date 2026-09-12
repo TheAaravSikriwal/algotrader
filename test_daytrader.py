@@ -68,9 +68,11 @@ class FakeBroker(Broker):
         return self._bars
 
     def submit_order(self, symbol, qty, side, order_type="market",
-                     limit_price=None, time_in_force="day"):
+                     limit_price=None, time_in_force="day",
+                     stop_loss=None, take_profit=None):
         self.submitted.append({"symbol": symbol, "qty": qty, "side": side,
-                               "type": order_type, "limit": limit_price})
+                               "type": order_type, "limit": limit_price,
+                               "stop_loss": stop_loss, "take_profit": take_profit})
         return Order(id=f"o{len(self.submitted)}", symbol=symbol, qty=qty,
                      side=side, status="new")
 
@@ -280,3 +282,30 @@ def test_an_uncovered_date_blocks_rather_than_assuming_hours():
     plan = t.plan(now=datetime(2030, 6, 3, 11, 0))
     assert plan["intents"] == []
     assert plan["blocks"]
+
+
+# -- exits live at the venue ---------------------------------------------
+
+def test_entries_carry_their_stop_and_target_to_the_broker():
+    """A stop held only in this process is not a stop.
+
+    If the laptop sleeps or the script dies with a position open, the only
+    protection left is whatever the venue was told about.
+    """
+    t, broker = _trader()
+    plan = t.plan(now=datetime(2026, 9, 14, 10, 40))
+    t.execute(plan["intents"])
+    sent = broker.submitted[0]
+    s = plan["intents"][0].setup
+    assert sent["stop_loss"] == pytest.approx(round(s.stop_px, 2))
+    assert sent["take_profit"] == pytest.approx(round(s.target_px, 2))
+
+
+def test_the_bracket_brackets_the_entry():
+    """Long: stop below, target above. A sign slip here inverts the trade."""
+    t, broker = _trader()
+    plan = t.plan(now=datetime(2026, 9, 14, 10, 40))
+    t.execute(plan["intents"])
+    sent = broker.submitted[0]
+    assert sent["side"] == "buy"
+    assert sent["stop_loss"] < sent["limit"] < sent["take_profit"]

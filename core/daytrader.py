@@ -21,7 +21,11 @@ Safety, in the order it is enforced:
      so the tests can assert on a plan without a broker.
   3. **Session-derived times.** Nothing is hardcoded to 16:00; the flatten
      deadline comes from the venue calendar, so a half-day closes on time.
-  4. **Flat at the end.** Every position is closed before the deadline. An
+  4. **Exits live at the venue.** Entries go out as brackets, so the stop and
+     target are attached by the broker the moment the entry fills. A stop that
+     exists only inside this loop protects nothing if the process dies, the
+     laptop sleeps, or the network drops while a position is open.
+  5. **Flat at the end.** Every position is closed before the deadline. An
      overnight hold is a bug in a strategy defined by not having them.
 """
 from __future__ import annotations
@@ -237,7 +241,9 @@ class DayTrader:
             try:
                 order = self.broker.submit_order(
                     s.symbol, it.qty, s.side, order_type="limit",
-                    limit_price=round(s.entry_px, 2), time_in_force="day")
+                    limit_price=round(s.entry_px, 2), time_in_force="day",
+                    stop_loss=round(s.stop_px, 2),
+                    take_profit=round(s.target_px, 2))
             except BrokerError as exc:
                 log.error("%s rejected: %s", s.symbol, exc)
                 sent.append({"symbol": s.symbol, "status": "rejected", "error": str(exc)})

@@ -163,9 +163,12 @@ class AlpacaBroker(Broker):
     # ---- orders ---------------------------------------------------------
     def submit_order(self, symbol: str, qty: float, side: str,
                      order_type: str = "market", limit_price: float | None = None,
-                     time_in_force: str = "day") -> Order:
-        from alpaca.trading.enums import OrderSide, TimeInForce
-        from alpaca.trading.requests import LimitOrderRequest, MarketOrderRequest
+                     time_in_force: str = "day",
+                     stop_loss: float | None = None,
+                     take_profit: float | None = None) -> Order:
+        from alpaca.trading.enums import OrderClass, OrderSide, TimeInForce
+        from alpaca.trading.requests import (LimitOrderRequest, MarketOrderRequest,
+                                             StopLossRequest, TakeProfitRequest)
 
         if qty <= 0:
             raise BrokerError(f"order qty must be positive, got {qty}")
@@ -174,14 +177,41 @@ class AlpacaBroker(Broker):
         tif = {"day": TimeInForce.DAY, "gtc": TimeInForce.GTC,
                "ioc": TimeInForce.IOC, "fok": TimeInForce.FOK}[time_in_force.lower()]
 
+        extra = {}
+        if stop_loss is not None or take_profit is not None:
+            # Alpaca rejects a bracket on anything but DAY or GTC, and rejects
+            # exits on the wrong side of the entry, so catch both here rather
+            # than reading it back off a 422.
+            if time_in_force.lower() not in {"day", "gtc"}:
+                raise BrokerError("a bracket order needs time_in_force day or gtc")
+            ref = limit_price
+            if ref is not None:
+                long = side.lower() == "buy"
+                if stop_loss is not None and ((long and stop_loss >= ref) or
+                                              (not long and stop_loss <= ref)):
+                    raise BrokerError(
+                        f"stop {stop_loss} is on the wrong side of entry {ref} "
+                        f"for a {side}")
+                if take_profit is not None and ((long and take_profit <= ref) or
+                                                (not long and take_profit >= ref)):
+                    raise BrokerError(
+                        f"target {take_profit} is on the wrong side of entry "
+                        f"{ref} for a {side}")
+            extra["order_class"] = OrderClass.BRACKET
+            if stop_loss is not None:
+                extra["stop_loss"] = StopLossRequest(stop_price=round(stop_loss, 2))
+            if take_profit is not None:
+                extra["take_profit"] = TakeProfitRequest(limit_price=round(take_profit, 2))
+
         if order_type.lower() == "limit":
             if limit_price is None:
                 raise BrokerError("a limit order needs a limit_price")
             req = LimitOrderRequest(symbol=symbol.upper(), qty=qty, side=side_enum,
-                                    time_in_force=tif, limit_price=round(limit_price, 2))
+                                    time_in_force=tif, limit_price=round(limit_price, 2),
+                                    **extra)
         else:
             req = MarketOrderRequest(symbol=symbol.upper(), qty=qty,
-                                     side=side_enum, time_in_force=tif)
+                                     side=side_enum, time_in_force=tif, **extra)
 
         o = self._trading.submit_order(order_data=req)
         return Order(

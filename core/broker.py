@@ -95,7 +95,17 @@ class Broker(ABC):
     @abstractmethod
     def submit_order(self, symbol: str, qty: float, side: str,
                      order_type: str = "market", limit_price: float | None = None,
-                     time_in_force: str = "day") -> Order: ...
+                     time_in_force: str = "day",
+                     stop_loss: float | None = None,
+                     take_profit: float | None = None) -> Order:
+        """Send one order.
+
+        Passing `stop_loss` and/or `take_profit` submits a bracket: the exits
+        are attached at the venue when the entry fills, and the two are
+        one-cancels-other. That matters more than it looks. A stop that only
+        exists inside a Python loop is not a stop -- it protects nothing if
+        the process dies, the laptop sleeps, or the network drops while a
+        position is open."""
 
     @abstractmethod
     def get_open_orders(self) -> list[Order]:

@@ -79,6 +79,8 @@ rm HALT         # resume
 - Daily loss limit, with the baseline stored on disk so it survives page
   reloads.
 - Caps on position count and single-order size.
+- Stops and targets are attached at the broker as a bracket, so they survive
+  the app being closed.
 - `HALT` file.
 - Live Alpaca keys live in separate environment variables and are blank, so
   live mode cannot start by accident.
@@ -99,6 +101,4 @@ nothing, so it is worth trusting a failure here.
 
 - No automatic loop. You click to plan and click to send. Deliberate: the
   order sent is the order you saw.
-- No bracket orders at the venue. Stops and targets are computed and shown but
-  not routed as OCO — closing is manual or at the deadline.
 - No streaming. The page reads bars when you click.
