@@ -220,6 +220,79 @@ if plan:
             st.dataframe(pd.DataFrame(trader.flatten()), width="stretch",
                          hide_index=True)
 
+# ------------------------------------------------- dry run on a closed market
+st.divider()
+step(0, "Not sure what this does? Watch it on a past day")
+plain("Runs the exact same rule over a day that has already happened, so you "
+      "can see the trades it would have taken without sending anything. "
+      "Useful when the market is shut.")
+
+past = [x for x in calendar.sessions() if x.day < now.date()]
+if past:
+    pick = st.selectbox(
+        "Which day", past[-20:][::-1], index=0,
+        format_func=lambda x: (f"{x.day:%A %d %B %Y}"
+                               + ("  (short day)" if x.is_half_day else "")))
+
+    if st.button("Replay that day"):
+        from core.data import DataError, load_bars
+        from core.data import session as rth
+        from core.daytrade import backtest, summarise
+
+        bars, problems = {}, []
+        with st.spinner("Fetching that day's bars..."):
+            for sym in symbols:
+                try:
+                    df = load_bars(sym, pick.day, pick.day + pd.Timedelta(days=1),
+                                   rule.timeframe, "alpaca")
+                    bars[sym] = rth(df)
+                except (DataError, Exception) as exc:
+                    problems.append(f"{sym}: {exc}")
+
+        if problems:
+            st.warning("\n".join(f"- {p}" for p in problems))
+
+        if bars:
+            trades = backtest(bars, rule, calendar, cost_bps=0.0)
+            gross = summarise(trades)
+            costed = summarise(backtest(bars, rule, calendar, cost_bps=2.0),
+                               cost_bps=2.0)
+
+            if trades.empty:
+                st.info("No trades that day. That is a common outcome -- the "
+                        "rule waits for a specific shape and most days do not "
+                        "produce one inside the trading window.")
+            else:
+                a, b, c = st.columns(3)
+                tile(a, "Trades it would have taken", str(gross["trades"]))
+                tile(b, "Won", f"{gross['win_rate']:.0%}",
+                     "a 2R target means under half can still work")
+                net = costed["mean_ret_bps"]
+                tile(c, "Average, after costs", f"{net:+.2f} bps",
+                     "per trade, at a 2 bps spread",
+                     "good" if net > 0 else "bad")
+
+                show = trades.assign(
+                    Direction=trades["direction"].map({1: "Long", -1: "Short"}),
+                    Result=trades["reason"].map({
+                        "target": "Hit the target", "stop": "Stopped out",
+                        "flatten": "Closed at the bell",
+                        "timeout": "Ran out of time",
+                        "eod_rollover": "Closed at the bell"}),
+                )[["symbol", "Direction", "entry_ts", "entry_px", "exit_px",
+                   "Result", "r", "ret_pct"]].rename(columns={
+                    "symbol": "What", "entry_ts": "Entered",
+                    "entry_px": "In at", "exit_px": "Out at",
+                    "r": "Risk multiples", "ret_pct": "Return %"})
+                st.dataframe(show.round(3), width="stretch", hide_index=True)
+                st.caption(
+                    "**Risk multiples** is the honest scorecard: +2 means it "
+                    "made twice what it was risking, -1 means it lost exactly "
+                    "what it put at risk. One day is far too small to judge "
+                    "anything -- this is here to show you the mechanics.")
+else:
+    st.caption("No past sessions in the calendar yet.")
+
 # ---------------------------------------------------------------- step 3
 st.divider()
 step(3, "Check what actually happened")

@@ -120,3 +120,20 @@ def test_session_boundaries(stamp, keep):
     idx = pd.DatetimeIndex([stamp], tz="America/New_York")
     out = session(_normalise(_bars(idx)))
     assert (len(out) == 1) is keep
+
+
+def test_the_broker_adapter_shares_this_normalisation():
+    """The live loop and the backtests must be on the same clock.
+
+    brokers/alpaca.py used to carry its own copy of this logic with the
+    original `tz_convert(None)` bug in it. Fixing core/data.py left the copy
+    untouched, so backtests read Eastern bars while the live loop read UTC
+    ones stamped 23:55 -- and a 10:30-15:30 window selected the wrong five
+    hours of the day.
+    """
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parent / "brokers" / "alpaca.py").read_text(
+        encoding="utf-8")
+    assert "normalise(df)" in src, "the adapter must call the shared normaliser"
+    assert "tz_convert(None)" not in src, "a second, unfixed copy has come back"

@@ -309,3 +309,18 @@ def test_the_bracket_brackets_the_entry():
     sent = broker.submitted[0]
     assert sent["side"] == "buy"
     assert sent["stop_loss"] < sent["limit"] < sent["take_profit"]
+
+
+def test_only_regular_hours_bars_feed_the_rule():
+    """Alpaca returns pre- and post-market bars by default.
+
+    A gap formed at 04:15 on two hundred shares is not the object the rule was
+    measured on, and its level would never be revisited in the session.
+    """
+    pre = pd.DataFrame(
+        [(10, 11, 10, 11), (11, 13, 11, 13), (13, 14, 12, 13)],
+        columns=["open", "high", "low", "close"],
+        index=pd.date_range("2026-09-14 04:15", periods=3, freq="5min"),
+    ).assign(volume=200.0)
+    t, _ = _trader(broker=FakeBroker(bars=pre))
+    assert t.plan(now=datetime(2026, 9, 14, 10, 40))["intents"] == []

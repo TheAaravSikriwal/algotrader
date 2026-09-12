@@ -49,7 +49,14 @@ def _cache_path(symbol: str, start: str, end: str, timeframe: str, source: str) 
     return CACHE_DIR / f"{safe}.csv"
 
 
-def _normalise(df: pd.DataFrame) -> pd.DataFrame:
+def normalise(df: pd.DataFrame) -> pd.DataFrame:
+    """Put any source's bars on the repo's contract: Eastern, tz-naive, OHLCV.
+
+    Public because broker adapters need it too. Keeping a second copy in
+    brokers/alpaca.py is what let the UTC bug survive being fixed here -- the
+    live loop went through the copy.
+    """
+
     df = df.copy()
     df.columns = [str(c).lower() for c in df.columns]
     missing = [c for c in COLUMNS if c not in df.columns]
@@ -66,6 +73,10 @@ def _normalise(df: pd.DataFrame) -> pd.DataFrame:
     df = df[~df.index.duplicated(keep="last")].sort_index()
     df = df.astype(float).dropna(subset=["open", "high", "low", "close"])
     return df
+
+
+#: Historic private name. Kept so existing call sites and tests keep working.
+_normalise = normalise
 
 
 def _from_yfinance(symbol: str, start: str, end: str, timeframe: str) -> pd.DataFrame:

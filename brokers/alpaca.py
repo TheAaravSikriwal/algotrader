@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 import pandas as pd
 
 from core.broker import Account, Broker, BrokerError, Clock, Order, Position
-from core.data import COLUMNS
+from core.data import COLUMNS, normalise
 
 
 def _f(x, default=0.0) -> float:
@@ -154,11 +154,11 @@ class AlpacaBroker(Broker):
         if isinstance(df.index, pd.MultiIndex):
             df = df.xs(symbol.upper(), level="symbol")
 
-        df.columns = [str(c).lower() for c in df.columns]
-        df = df[COLUMNS].astype(float)
-        if isinstance(df.index, pd.DatetimeIndex) and df.index.tz is not None:
-            df.index = df.index.tz_convert(None)
-        return df.sort_index().tail(limit)
+        # One normalisation, shared with core.data. A second copy here is what
+        # let the UTC bug survive being fixed there: the backtests read the
+        # fixed path while the live loop read this one, so bars arrived stamped
+        # 23:55 and a 10:30-15:30 window selected the wrong five hours.
+        return normalise(df).tail(limit)
 
     # ---- orders ---------------------------------------------------------
     def submit_order(self, symbol: str, qty: float, side: str,

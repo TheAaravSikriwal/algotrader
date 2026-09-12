@@ -39,6 +39,7 @@ from pathlib import Path
 import pandas as pd
 
 from core.broker import Broker, BrokerError
+from core.data import session as rth
 from core.daytrade import DayTradeConfig, Setup, find_setups
 from core.fills import FillLog, FillRecord, mid
 from core.marketclock import CalendarError, MarketCalendar, Session
@@ -188,7 +189,11 @@ class DayTrader:
                 if bars is None or len(bars) < 3:
                     continue
 
-                today = bars[bars.index.normalize() == pd.Timestamp(now.date())]
+                # Regular hours only, matching the backtest. Alpaca hands back
+                # pre- and post-market bars by default, and a gap formed at
+                # 04:15 on two hundred shares of volume is not the same object
+                # the rule was measured on.
+                today = rth(bars[bars.index.normalize() == pd.Timestamp(now.date())])
                 if len(today) < 3:
                     continue
 
