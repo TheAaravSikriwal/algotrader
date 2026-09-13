@@ -28,7 +28,10 @@ from core.env import load_env
 load_env()
 import strategies  # noqa: F401  -- registers the built-ins
 
-st.set_page_config(page_title="Backtester", page_icon="~", layout="wide")
+try:
+    st.set_page_config(page_title="Backtester", page_icon="~", layout="wide")
+except Exception:
+    pass  # the host page already configured it
 
 TIMEFRAMES = ["1Day", "1Hour", "15Min", "5Min", "1Min"]
 

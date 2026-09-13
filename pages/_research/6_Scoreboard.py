@@ -16,13 +16,16 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from core.journal import NULL, SIGNIFICANT, SIGNIFICANT_NEGATIVE, Journal
 from core.theme import apply_layout, tokens
 from core.ui import page_header, tile
 
-st.set_page_config(page_title="Research journal", layout="wide")
+try:
+    st.set_page_config(page_title="Research journal", layout="wide")
+except Exception:
+    pass  # the host page already configured it
 
 
 def tstat_chart(frame: pd.DataFrame, bar: float, mode: str) -> go.Figure:

@@ -15,7 +15,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from core.broker import BrokerError
 from core.env import load_env
@@ -28,7 +28,10 @@ from strategies.cross_sectional import available_xs, get_xs_strategy
 
 load_env()
 
-st.set_page_config(page_title="Practice trading", layout="wide")
+try:
+    st.set_page_config(page_title="Practice trading", layout="wide")
+except Exception:
+    pass  # the host page already configured it
 
 BOOKS = {
     "Sectors and bonds (macro)": ["SPY", "QQQ", "IWM", "DIA", "TLT", "GLD",

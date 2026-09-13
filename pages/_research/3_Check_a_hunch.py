@@ -14,7 +14,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from core.data import load_bars
 from core.env import load_env
@@ -27,7 +27,10 @@ from core.ui import page_header, pct, tile
 
 load_env()
 
-st.set_page_config(page_title="Event study", layout="wide")
+try:
+    st.set_page_config(page_title="Event study", layout="wide")
+except Exception:
+    pass  # the host page already configured it
 
 UNIVERSES = {
     "megacap": ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "AVGO",

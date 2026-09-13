@@ -1,0 +1,362 @@
+[
+ {
+  "name": "Gap fade on TLT",
+  "quadrant": "short_term",
+  "strategy": "Gap fade",
+  "params": {},
+  "symbols": [
+   "TLT"
+  ],
+  "stop_loss_pct": 0.0,
+  "take_profit_pct": 0.0,
+  "rationale": "Bets against an overnight gap, on the idea that the move overshoots and part of it comes back.",
+  "id": "6dc4e6a561",
+  "created": "2026-09-13",
+  "backtest": {
+   "total_return_pct": 5.905192145283754,
+   "hold_return_pct": 0.0,
+   "vs_hold_pct": 5.905192145283754,
+   "last_month_pct": null,
+   "trades": 387,
+   "win_rate": null,
+   "expectancy_pct": 0.015258894432257763,
+   "payoff_ratio": null,
+   "profit_factor": NaN,
+   "t_stat": 0.7810471978559865,
+   "kelly": null,
+   "suggested_size": null,
+   "years": 6,
+   "cost_bps": 5.0,
+   "symbols_tested": 1,
+   "avg_hold_bars": 0.46042296072507544,
+   "seeded": true
+  },
+  "active": true
+ },
+ {
+  "name": "Walk-forward logistic on TLT",
+  "quadrant": "short_term",
+  "strategy": "Walk-forward logistic",
+  "params": {},
+  "symbols": [
+   "TLT"
+  ],
+  "stop_loss_pct": 0.0,
+  "take_profit_pct": 0.0,
+  "rationale": "A logistic regression refitted on past bars only, letting the data pick the pattern.",
+  "id": "8ac8a2683b",
+  "created": "2026-09-13",
+  "backtest": {
+   "total_return_pct": 4.591611965534331,
+   "hold_return_pct": 0.0,
+   "vs_hold_pct": 4.591611965534331,
+   "last_month_pct": null,
+   "trades": 534,
+   "win_rate": null,
+   "expectancy_pct": 0.008598524280026837,
+   "payoff_ratio": null,
+   "profit_factor": NaN,
+   "t_stat": 0.8625769462812859,
+   "kelly": null,
+   "suggested_size": null,
+   "years": 6,
+   "cost_bps": 5.0,
+   "symbols_tested": 1,
+   "avg_hold_bars": 1.2528571428571424,
+   "seeded": true
+  },
+  "active": true
+ },
+ {
+  "name": "Bollinger reversion on TLT",
+  "quadrant": "short_term",
+  "strategy": "Bollinger reversion",
+  "params": {},
+  "symbols": [
+   "TLT"
+  ],
+  "stop_loss_pct": 0.0,
+  "take_profit_pct": 0.0,
+  "rationale": "Seeded from the evaluation run.",
+  "id": "607c91b0af",
+  "created": "2026-09-13",
+  "backtest": {
+   "total_return_pct": 3.628375239920839,
+   "hold_return_pct": 0.0,
+   "vs_hold_pct": 3.628375239920839,
+   "last_month_pct": null,
+   "trades": 73,
+   "win_rate": null,
+   "expectancy_pct": 0.049703770409874504,
+   "payoff_ratio": null,
+   "profit_factor": NaN,
+   "t_stat": 0.675052439250207,
+   "kelly": null,
+   "suggested_size": null,
+   "years": 6,
+   "cost_bps": 5.0,
+   "symbols_tested": 1,
+   "avg_hold_bars": 5.134426229508195,
+   "seeded": true
+  },
+  "active": true
+ },
+ {
+  "name": "ADX trend on TLT",
+  "quadrant": "short_term",
+  "strategy": "ADX trend",
+  "params": {},
+  "symbols": [
+   "TLT"
+  ],
+  "stop_loss_pct": 0.0,
+  "take_profit_pct": 0.0,
+  "rationale": "Seeded from the evaluation run.",
+  "id": "a5cdb9ba46",
+  "created": "2026-09-13",
+  "backtest": {
+   "total_return_pct": 3.2661710067397163,
+   "hold_return_pct": 0.0,
+   "vs_hold_pct": 3.2661710067397163,
+   "last_month_pct": null,
+   "trades": 52,
+   "win_rate": null,
+   "expectancy_pct": 0.0628109808988407,
+   "payoff_ratio": null,
+   "profit_factor": NaN,
+   "t_stat": 0.5705516529810051,
+   "kelly": null,
+   "suggested_size": null,
+   "years": 6,
+   "cost_bps": 5.0,
+   "symbols_tested": 1,
+   "avg_hold_bars": 4.97391304347826,
+   "seeded": true
+  },
+  "active": true
+ },
+ {
+  "name": "Regime-filtered trend on TLT",
+  "quadrant": "long_term",
+  "strategy": "Regime-filtered trend",
+  "params": {},
+  "symbols": [
+   "TLT"
+  ],
+  "stop_loss_pct": 0.0,
+  "take_profit_pct": 0.0,
+  "rationale": "Seeded from the evaluation run.",
+  "id": "5f96cc63b9",
+  "created": "2026-09-13",
+  "backtest": {
+   "total_return_pct": 2.250272162218657,
+   "hold_return_pct": 0.0,
+   "vs_hold_pct": 2.250272162218657,
+   "last_month_pct": null,
+   "trades": 58,
+   "win_rate": null,
+   "expectancy_pct": 0.038797795900321674,
+   "payoff_ratio": null,
+   "profit_factor": NaN,
+   "t_stat": 0.4055539746755143,
+   "kelly": null,
+   "suggested_size": null,
+   "years": 6,
+   "cost_bps": 5.0,
+   "symbols_tested": 1,
+   "avg_hold_bars": 15.37190082644628,
+   "seeded": true
+  },
+  "active": true
+ },
+ {
+  "name": "Absolute momentum with trend filter on TLT",
+  "quadrant": "long_term",
+  "strategy": "Absolute momentum with trend filter",
+  "params": {},
+  "symbols": [
+   "TLT"
+  ],
+  "stop_loss_pct": 0.0,
+  "take_profit_pct": 0.0,
+  "rationale": "Seeded from the evaluation run.",
+  "id": "7218c82015",
+  "created": "2026-09-13",
+  "backtest": {
+   "total_return_pct": 2.150088158276056,
+   "hold_return_pct": 0.0,
+   "vs_hold_pct": 2.150088158276056,
+   "last_month_pct": null,
+   "trades": 63,
+   "win_rate": null,
+   "expectancy_pct": 0.034128383464699305,
+   "payoff_ratio": null,
+   "profit_factor": NaN,
+   "t_stat": 0.4017705810533095,
+   "kelly": null,
+   "suggested_size": null,
+   "years": 6,
+   "cost_bps": 5.0,
+   "symbols_tested": 1,
+   "avg_hold_bars": 25.420224719101125,
+   "seeded": true
+  },
+  "active": true
+ },
+ {
+  "name": "Donchian breakout on TLT",
+  "quadrant": "long_term",
+  "strategy": "Donchian breakout",
+  "params": {},
+  "symbols": [
+   "TLT"
+  ],
+  "stop_loss_pct": 0.0,
+  "take_profit_pct": 0.0,
+  "rationale": "Seeded from the evaluation run.",
+  "id": "71df6c4138",
+  "created": "2026-09-13",
+  "backtest": {
+   "total_return_pct": 1.0192438751341075,
+   "hold_return_pct": 0.0,
+   "vs_hold_pct": 1.0192438751341075,
+   "last_month_pct": null,
+   "trades": 67,
+   "win_rate": null,
+   "expectancy_pct": 0.015212595151255337,
+   "payoff_ratio": null,
+   "profit_factor": NaN,
+   "t_stat": 0.1992582162891661,
+   "kelly": null,
+   "suggested_size": null,
+   "years": 6,
+   "cost_bps": 5.0,
+   "symbols_tested": 1,
+   "avg_hold_bars": 13.111111111111112,
+   "seeded": true
+  },
+  "active": true
+ },
+ {
+  "name": "Turtle breakout on TLT",
+  "quadrant": "long_term",
+  "strategy": "Turtle breakout",
+  "params": {},
+  "symbols": [
+   "TLT"
+  ],
+  "stop_loss_pct": 0.0,
+  "take_profit_pct": 0.0,
+  "rationale": "Enters on a 20-bar high, exits on a 10-bar low. The 1983 Dennis and Eckhardt rule.",
+  "id": "8e0fd3ed14",
+  "created": "2026-09-13",
+  "backtest": {
+   "total_return_pct": 1.0192438751341075,
+   "hold_return_pct": 0.0,
+   "vs_hold_pct": 1.0192438751341075,
+   "last_month_pct": null,
+   "trades": 67,
+   "win_rate": null,
+   "expectancy_pct": 0.015212595151255337,
+   "payoff_ratio": null,
+   "profit_factor": NaN,
+   "t_stat": 0.1992582162891661,
+   "kelly": null,
+   "suggested_size": null,
+   "years": 6,
+   "cost_bps": 5.0,
+   "symbols_tested": 1,
+   "avg_hold_bars": 13.111111111111112,
+   "seeded": true
+  },
+  "active": true
+ },
+ {
+  "name": "Gap fade \u2014 Fast movers (short term)",
+  "quadrant": "short_term",
+  "strategy": "Gap fade",
+  "params": {
+   "gap_pct": 1.0,
+   "hold": 1,
+   "fade_up": true,
+   "fade_down": true
+  },
+  "symbols": [
+   "SPY",
+   "QQQ",
+   "NVDA",
+   "AMD",
+   "TSLA"
+  ],
+  "stop_loss_pct": 0.0,
+  "take_profit_pct": 0.0,
+  "rationale": "",
+  "id": "eee58602d1",
+  "created": "2026-09-13",
+  "backtest": {
+   "total_return_pct": 5.799411600702853,
+   "hold_return_pct": 300.314454386027,
+   "vs_hold_pct": -294.5150427853241,
+   "last_month_pct": 1.8610220293286563,
+   "symbols_tested": 5,
+   "years": 5,
+   "cost_bps": 5.0,
+   "trades": 1746,
+   "win_rate": 0.5040091638029782,
+   "expectancy_pct": 0.0877314455271989,
+   "payoff_ratio": 1.0489482445953324,
+   "profit_factor": 1.065905837464079,
+   "t_stat": 0.9285888307463269,
+   "kelly": 0.031163302481796273,
+   "suggested_size": 0.007790825620449068,
+   "per_symbol": [
+    {
+     "symbol": "SPY",
+     "total_return_pct": -10.947589369650645,
+     "hold_return_pct": 84.10639247903168,
+     "vs_hold_pct": -95.05398184868233,
+     "last_month_pct": 0.0,
+     "bars": 1254,
+     "exposure": 0.10366826156299841
+    },
+    {
+     "symbol": "QQQ",
+     "total_return_pct": 1.1180452579061528,
+     "hold_return_pct": 96.29538073959316,
+     "vs_hold_pct": -95.17733548168701,
+     "last_month_pct": -2.0423034596265377,
+     "bars": 1254,
+     "exposure": 0.17942583732057416
+    },
+    {
+     "symbol": "NVDA",
+     "total_return_pct": 19.32125705423364,
+     "hold_return_pct": 885.7541353296679,
+     "vs_hold_pct": -866.4328782754342,
+     "last_month_pct": 2.8029169844838275,
+     "bars": 1254,
+     "exposure": 0.5039872408293461
+    },
+    {
+     "symbol": "AMD",
+     "total_return_pct": 45.8119725137695,
+     "hold_return_pct": 388.15850609633554,
+     "vs_hold_pct": -342.34653358256605,
+     "last_month_pct": -11.901672412009201,
+     "bars": 1254,
+     "exposure": 0.5055821371610846
+    },
+    {
+     "symbol": "TSLA",
+     "total_return_pct": -26.30662745274438,
+     "hold_return_pct": 47.25785728550671,
+     "vs_hold_pct": -73.56448473825108,
+     "last_month_pct": 20.446169033795194,
+     "bars": 1254,
+     "exposure": 0.5207336523125997
+    }
+   ]
+  },
+  "active": true
+ }
+]

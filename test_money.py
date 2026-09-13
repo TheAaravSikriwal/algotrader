@@ -200,3 +200,16 @@ def test_dollar_signs_are_escaped_for_markdown():
     out = md("On a $1,000 trade this nets $0.16 a trade")
     assert out.count("\$") == 2
     assert "$1,000" not in out.replace("\$", "@")
+
+
+def test_md_is_for_markdown_only_not_for_html_blocks():
+    """A record of a bug, so the escaping is not applied in the wrong place.
+
+    Inside `unsafe_allow_html` the backslash has no meaning and renders as a
+    literal "\$43". `md` belongs on st.markdown/st.info prose, never on a
+    string being dropped into an HTML div.
+    """
+    from core.money import brief, md
+    raw = brief(4.3, "once", 1_000)
+    assert raw.startswith("$"), "HTML blocks take the unescaped form"
+    assert md(raw).startswith("\$"), "markdown blocks take the escaped form"

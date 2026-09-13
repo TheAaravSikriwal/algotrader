@@ -18,7 +18,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from core.broker import BrokerError
 from core.daytrade import DayTradeConfig
@@ -31,14 +31,16 @@ from core.ui import active_mode, inject_css, page_header, plain, step, tile
 
 load_env()
 
-st.set_page_config(page_title="Day trading", layout="wide")
+try:
+    st.set_page_config(page_title="Day trading", layout="wide")
+except Exception:
+    pass  # the host page already configured it
 mode = active_mode()
 inject_css(mode)
 
-st.markdown(page_header(
+page_header(
     "Day trading practice",
-    "Small, fast trades on the practice account. Read the box below first."),
-    unsafe_allow_html=True)
+    "Small, fast trades on the practice account. Read the box below first.")
 
 # ---------------------------------------------------------------- the warning
 st.error(
