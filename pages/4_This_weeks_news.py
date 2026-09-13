@@ -308,7 +308,8 @@ def main():
             tile(cols[1], "Hit rate", f"{summary.get('hit_rate', 0):.0%}",
                  "right direction")
             tile(cols[2], "Mean contribution",
-                 f"{summary.get('mean_contribution_%', 0):+.2f}%", "per call")
+                 f"{summary.get('mean_contribution_%', 0):+.2f}%", "per call",
+                 money_kind="once")
             tile(cols[3], "t", f"{summary.get('tstat', 0):+.2f}",
                  "vs zero",
                  "up" if abs(summary.get("tstat", 0)) >= 2 else "flat")

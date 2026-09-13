@@ -24,6 +24,7 @@ from core.broker import BrokerError
 from core.daytrade import DayTradeConfig
 from core.daytrader import DayTrader, DayTraderConfig, NotPaper
 from core.env import load_env
+from core import money
 from core.fills import FillLog, summarise, verdict
 from core.marketclock import CalendarError, MarketCalendar
 from core.ui import active_mode, inject_css, page_header, plain, step, tile
@@ -57,7 +58,7 @@ with st.expander("Show me the numbers behind that"):
         "earned before costs. <b>Spread</b> is what it costs to trade in that "
         "slice. <b>Net</b> is what is left. A basis point (bps) is one hundredth "
         "of one percent.")
-    st.dataframe(pd.DataFrame([
+    _rows = [
         {"When": "First 15 minutes", "Trades": 880, "Gross (bps)": 5.38,
          "Cost (bps)": 3.78, "Net (bps)": 1.60},
         {"When": "First hour", "Trades": 12029, "Gross (bps)": 3.41,
@@ -68,7 +69,15 @@ with st.expander("Show me the numbers behind that"):
          "Cost (bps)": 1.59, "Net (bps)": -0.92},
         {"When": "Last hour", "Trades": 19328, "Gross (bps)": 1.31,
          "Cost (bps)": 1.79, "Net (bps)": -0.48},
-    ]), width="stretch", hide_index=True)
+    ]
+    # Basis points are the easiest unit here to read past. The last two columns
+    # say the same thing in money, on a $1,000 trade and over a year of one
+    # trade a day, which is the cadence this rule actually runs at.
+    for _r in _rows:
+        _r["Net on $1,000"] = money.fmt(money.amount(_r["Net (bps)"] / 100.0, 1_000))
+        _r["After 250 trades"] = money.fmt(
+            money.grow(_r["Net (bps)"] / 100.0, 250, 1_000) - 1_000)
+    st.dataframe(pd.DataFrame(_rows), width="stretch", hide_index=True)
     st.caption(
         "Even the two positive rows are thin. On the worst tenth of days the "
         "spread in the first fifteen minutes is 10.6 bps, which turns that "
@@ -270,7 +279,7 @@ if past:
                 net = costed["mean_ret_bps"]
                 tile(c, "Average, after costs", f"{net:+.2f} bps",
                      "per trade, at a 2 bps spread",
-                     "good" if net > 0 else "bad")
+                     "good" if net > 0 else "bad", money_kind="bps")
 
                 show = trades.assign(
                     Direction=trades["direction"].map({1: "Long", -1: "Short"}),
@@ -327,10 +336,11 @@ else:
     if "slippage_bps_mean" in s:
         tile(c, "Average slippage", f"{s['slippage_bps_mean']:.2f} bps",
              "positive means it cost you",
-             "bad" if s["slippage_bps_mean"] > 1 else "good")
+             "bad" if s["slippage_bps_mean"] > 1 else "good", money_kind="bps")
         tile(d, "Real cost per round trip", f"{s['effective_spread_bps']:.2f} bps",
              "the backtest assumed 1.59",
-             "bad" if s["effective_spread_bps"] > 1.59 else "good")
+             "bad" if s["effective_spread_bps"] > 1.59 else "good",
+             money_kind="bps")
 
     if v["verdict"] == "insufficient data":
         st.info(f"**Too early to say.** {v['note']}\n\n"

@@ -203,14 +203,15 @@ def main():
          f"{s['symbols']} symbols",
          "up" if s["events"] >= 30 else "flat")
     tile(cols[1], "Event day", f"{s['event_day_%']:+.2f}%",
-         f"t = {s['t_event_day']:+.2f}")
+         f"t = {s['t_event_day']:+.2f}", money_kind="once")
     for i, day in enumerate((5, 10, 20)):
         key = f"car_{day}d_%"
         if key in s:
             t_val = s[f"t_{day}d"]
             tile(cols[2 + i], f"{day}-day drift", f"{s[key]:+.2f}%",
                  f"t = {t_val:+.2f}",
-                 "up" if t_val >= 2 else ("down" if t_val <= -2 else "flat"))
+                 "up" if t_val >= 2 else ("down" if t_val <= -2 else "flat"),
+                 money_kind="once")
     tile(cols[5], "Clustering", f"{s['clustering']:.0%}",
          "share on one date",
          "down" if s["clustering"] > 0.2 else "flat")

@@ -170,13 +170,14 @@ def show_window(label: str, window: Panel, cfg: dict, pcfg: PanelConfig, mode: s
     cols = st.columns(6)
     tile(cols[0], "Total return", pct(stats.get("Total return", 0)),
          f"equal weight {pct(ew_stats.get('Total return', 0))}",
-         tone_of(stats.get("Total return", 0)))
+         tone_of(stats.get("Total return", 0)), money_kind="once")
     tile(cols[1], "CAGR", pct(stats.get("CAGR", 0)), "annualised",
-         tone_of(stats.get("CAGR", 0)))
+         tone_of(stats.get("CAGR", 0)), money_kind="annual")
     tile(cols[2], "Sharpe", f"{stats.get('Sharpe', 0):.2f}",
          f"equal weight {ew_stats.get('Sharpe', 0):.2f}")
     tile(cols[3], "Max drawdown", pct(stats.get("Max drawdown", 0)),
-         f"equal weight {pct(ew_stats.get('Max drawdown', 0))}", "down")
+         f"equal weight {pct(ew_stats.get('Max drawdown', 0))}", "down",
+         money_kind="once")
     tile(cols[4], "t vs equal weight", f"{t_vs_ew:+.2f}",
          "did the ranking add anything",
          "up" if t_vs_ew >= 2 else ("down" if t_vs_ew <= -2 else "flat"))

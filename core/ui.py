@@ -48,12 +48,59 @@ def inject_css(mode: str):
     """, unsafe_allow_html=True)
 
 
-def tile(col, label: str, value: str, sub: str = "", tone: str = ""):
+def money_line(value: str, kind: str = "annual", basis: float = 1_000.0,
+               periods: int | None = None, compact: bool = True) -> str:
+    """A dollar illustration for a percentage, or "" when there is not one.
+
+    Percentages hide their own size. "+0.0083%" and "+8%" read almost the same
+    at a glance and differ by a factor of a thousand, so every tile showing a
+    percentage carries the money it works out to.
+
+    Returns "" for anything that is not a parseable percentage, so a caller
+    can pass a value straight through without checking it first.
+    """
+    from core import money
+
+    text = str(value).strip().replace(",", "")
+
+    # Basis points are the easiest unit in finance to read past -- "+0.67 bps"
+    # and "-9.2 bps" look equally small and differ in sign only. A tile showing
+    # them needs the money line more than a percentage tile does, so parse
+    # both suffixes rather than only the one.
+    if text.lower().endswith("bps"):
+        raw, kind = text[:-3].strip(), "bps"
+    elif text.endswith("%"):
+        raw = text[:-1]
+    else:
+        return ""
+
+    try:
+        pct_value = float(raw.replace("+", ""))
+    except ValueError:
+        return ""
+    renderer = money.brief if compact else money.describe
+    return renderer(pct_value, kind=kind, basis=basis, periods=periods)
+
+
+def tile(col, label: str, value: str, sub: str = "", tone: str = "",
+         money_kind: str | None = None, basis: float = 1_000.0,
+         periods: int | None = None):
+    """A stat tile. Pass `money_kind` to add a worked dollar example.
+
+    `money_kind` is "annual", "trade", "bps" or "once". Leaving it None keeps
+    the tile exactly as it was, so existing callers are unaffected.
+    """
     cls = f" {tone}" if tone else ""
+    extra = ""
+    if money_kind:
+        line = money_line(value, money_kind, basis, periods)
+        if line:
+            extra = (f'<div class="sub" style="opacity:.6;margin-top:3px">'
+                     f'{line}</div>')
     col.markdown(
         f'<div class="tile"><div class="label">{label}</div>'
         f'<div class="value{cls}">{value}</div>'
-        f'<div class="sub">{sub}</div></div>',
+        f'<div class="sub">{sub}</div>{extra}</div>',
         unsafe_allow_html=True)
 
 
@@ -97,7 +144,8 @@ def page_header(title: str, subtitle: str = "") -> str:
 # plain-English helpers
 # ---------------------------------------------------------------------------
 def explained_tile(col, key: str, value: str, sub: str = "", tone: str = "",
-                   label: str | None = None):
+                   label: str | None = None, money_kind: str | None = None,
+                   basis: float = 1_000.0, periods: int | None = None):
     """A stat tile that can explain itself on hover."""
     from core.explain import metric
 
@@ -115,12 +163,19 @@ def explained_tile(col, key: str, value: str, sub: str = "", tone: str = "",
     if item:
         hint = html.escape(item.tooltip(), quote=True).replace("\n", "&#10;")
 
+    extra = ""
+    if money_kind:
+        line = money_line(str(value), money_kind, basis, periods)
+        if line:
+            extra = (f'<div class="sub" style="opacity:.6;margin-top:3px">'
+                     f'{html.escape(line)}</div>')
+
     col.markdown(
         f'<div class="tile" title="{hint}">'
         f'<div class="label">{html.escape(title)} '
         f'<span style="opacity:.45">&#9432;</span></div>'
         f'<div class="value{cls}">{html.escape(str(value))}</div>'
-        f'<div class="sub">{html.escape(str(sub))}</div></div>',
+        f'<div class="sub">{html.escape(str(sub))}</div>{extra}</div>',
         unsafe_allow_html=True)
 
 

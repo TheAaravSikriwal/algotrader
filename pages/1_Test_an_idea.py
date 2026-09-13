@@ -223,12 +223,14 @@ def main():
     cols = st.columns(6)
     tile(cols[0], "Total return", pct(stats["Total return"]),
          f"buy & hold {pct(stats.get('Buy & hold return', 0.0))}",
-         tone_of(stats["Total return"]))
-    tile(cols[1], "CAGR", pct(stats["CAGR"]), "annualised", tone_of(stats["CAGR"]))
+         tone_of(stats["Total return"]), money_kind="once")
+    tile(cols[1], "CAGR", pct(stats["CAGR"]), "annualised", tone_of(stats["CAGR"]),
+         money_kind="annual")
     tile(cols[2], "Sharpe", f"{stats['Sharpe']:.2f}",
          f"buy & hold {stats.get('Buy & hold Sharpe', 0.0):.2f}")
     tile(cols[3], "Max drawdown", pct(stats["Max drawdown"]),
-         f"buy & hold {pct(stats.get('Buy & hold max DD', 0.0))}", "down")
+         f"buy & hold {pct(stats.get('Buy & hold max DD', 0.0))}", "down",
+         money_kind="once")
     tile(cols[4], "Win rate", pct(stats["Win rate"], 0), f"{stats['Trades']} trades")
     tile(cols[5], "Time in market", pct(stats["Time in market"], 0),
          f"final ${stats['Final equity']:,.0f}")
