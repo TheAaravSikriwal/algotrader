@@ -59,25 +59,39 @@ with st.expander("Show me the numbers behind that"):
         "slice. <b>Net</b> is what is left. A basis point (bps) is one hundredth "
         "of one percent.")
     _rows = [
-        {"When": "First 15 minutes", "Trades": 880, "Gross (bps)": 5.38,
-         "Cost (bps)": 3.78, "Net (bps)": 1.60},
-        {"When": "First hour", "Trades": 12029, "Gross (bps)": 3.41,
-         "Cost (bps)": 2.34, "Net (bps)": 1.07},
-        {"When": "Whole day", "Trades": 140879, "Gross (bps)": 0.91,
-         "Cost (bps)": 2.10, "Net (bps)": -1.19},
-        {"When": "10:30-15:30 (this page)", "Trades": 121631, "Gross (bps)": 0.67,
-         "Cost (bps)": 1.59, "Net (bps)": -0.92},
-        {"When": "Last hour", "Trades": 19328, "Gross (bps)": 1.31,
-         "Cost (bps)": 1.79, "Net (bps)": -0.48},
+        ("First 15 minutes", 880, 5.38, 3.78, 1.60),
+        ("First hour", 12_029, 3.41, 2.34, 1.07),
+        ("Whole day", 140_879, 0.91, 2.10, -1.19),
+        ("10:30-15:30 (this page)", 121_631, 0.67, 1.59, -0.92),
+        ("Last hour", 19_328, 1.31, 1.79, -0.48),
     ]
-    # Basis points are the easiest unit here to read past. The last two columns
-    # say the same thing in money, on a $1,000 trade and over a year of one
-    # trade a day, which is the cadence this rule actually runs at.
-    for _r in _rows:
-        _r["Net on $1,000"] = money.fmt(money.amount(_r["Net (bps)"] / 100.0, 1_000))
-        _r["After 250 trades"] = money.fmt(
-            money.grow(_r["Net (bps)"] / 100.0, 250, 1_000) - 1_000)
-    st.dataframe(pd.DataFrame(_rows), width="stretch", hide_index=True)
+    # Headers kept short so all seven columns fit. At full width the two money
+    # columns were pushed off the right edge, which hid the only part of this
+    # table a beginner can read without converting basis points in their head.
+    st.dataframe(pd.DataFrame([
+        {"When": when, "Trades": n, "Gross (bps)": gross,
+         "Cost (bps)": cost, "Net (bps)": net}
+        for when, n, gross, cost, net in _rows
+    ]), width="stretch", hide_index=True)
+
+    # The money conversion goes in prose rather than in extra columns. Seven
+    # columns overflow a narrow window and push the dollars off the right edge,
+    # which hides the only part of this table readable without converting basis
+    # points in your head.
+    _here, _best = _rows[3], _rows[0]
+    # The table marks this row "(this page)"; repeating that inside the
+    # sentence's own brackets reads as nested parentheses.
+    _here_label = _here[0].replace(" (this page)", "")
+    st.markdown(money.md(
+        f"**What those basis points are, in money.** On a $1,000 trade the "
+        f"window this page uses ({_here_label}) nets "
+        f"**{money.fmt(money.amount(_here[4] / 100.0, 1_000))}** a trade, which "
+        f"is **{money.fmt(money.grow(_here[4] / 100.0, 250, 1_000) - 1_000)}** "
+        f"over a year of one trade a day. The best window ({_best[0]}) nets "
+        f"**{money.fmt(money.amount(_best[4] / 100.0, 1_000))}** a trade, or "
+        f"**{money.fmt(money.grow(_best[4] / 100.0, 250, 1_000) - 1_000)}** a "
+        f"year -- on {_best[1]:,} trades, the smallest sample in the table."))
+    st.caption(money.caveat())
     st.caption(
         "Even the two positive rows are thin. On the worst tenth of days the "
         "spread in the first fifteen minutes is 10.6 bps, which turns that "
@@ -310,14 +324,14 @@ plain("**This is the part that matters.** The test is not whether you made "
     "far too small to read. The test is whether your orders filled, and at "
     "what price.")
 
-st.info(
+st.info(money.md(
     "**One caveat about your account size.** With a $5,000 practice account "
     "and SPY near $765, a single order works out at one or two shares. That "
     "is fine for learning the mechanics, but it flatters the very thing "
     "being measured: a one-share limit order fills far more easily than a "
     "realistic one, because it can slot into a gap in the queue that a "
     "hundred shares could not. So read a good fill rate here as an upper "
-    "bound, not a result.")
+    "bound, not a result."))
 
 log = FillLog(trader.fills.path)
 fills = log.frame()

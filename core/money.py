@@ -139,3 +139,14 @@ def brief(pct: float, kind: str = "annual", basis: float = DEFAULT_BASIS,
     if kind == "bps":
         return f"{fmt(amount(pct / 100.0, basis))} per {fmt(basis)}"
     return f"{fmt(amount(pct, basis))} per {fmt(basis)}"
+
+
+def md(text: str) -> str:
+    """Escape dollar signs so Streamlit does not read them as maths.
+
+    Streamlit's markdown treats `$...$` as LaTeX. A sentence containing two
+    amounts silently becomes an equation and the text between them renders as
+    italic symbols -- which is exactly what happened the first time this
+    module's output reached a markdown block.
+    """
+    return text.replace("$", "\\$")

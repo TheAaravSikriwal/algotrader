@@ -187,3 +187,16 @@ def test_a_frequency_is_still_parsed_but_should_not_be_asked_for():
     """
     from core.ui import money_line
     assert money_line("50%", "once") == "$500 per $1,000"
+
+
+def test_dollar_signs_are_escaped_for_markdown():
+    """Streamlit reads `$...$` as LaTeX.
+
+    A sentence with two amounts in it silently became an equation and the
+    words between them rendered as italic maths symbols. Caught by looking at
+    the page rather than by any assertion, which is why there is now one.
+    """
+    from core.money import md
+    out = md("On a $1,000 trade this nets $0.16 a trade")
+    assert out.count("\$") == 2
+    assert "$1,000" not in out.replace("\$", "@")
