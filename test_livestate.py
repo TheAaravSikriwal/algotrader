@@ -145,3 +145,49 @@ def test_decisions_are_limited_to_the_tail(bridge):
 
 def test_no_decision_log_is_empty_not_an_error(bridge):
     assert bridge.decisions() == []
+
+
+# -- several running copies ----------------------------------------------
+
+def test_named_instances_write_to_separate_files(tmp_path):
+    """Two copies trading different symbols must not overwrite each other."""
+    a = Bridge(tmp_path, name="SPY desk")
+    b = Bridge(tmp_path, name="nvda")
+    a.publish({"running": "Keltner breakout"})
+    b.publish({"running": "Day of week"})
+    assert a.state()["running"] == "Keltner breakout"
+    assert b.state()["running"] == "Day of week"
+    assert a.state_path != b.state_path
+
+
+def test_an_instance_name_is_made_filename_safe(tmp_path):
+    bridge = Bridge(tmp_path, name="SPY / QQQ  desk!")
+    bridge.publish({"running": "x"})
+    assert bridge.state_path.exists()
+    assert "/" not in bridge.state_path.name
+
+
+def test_the_unnamed_instance_keeps_the_plain_filename(tmp_path):
+    """Existing installs keep working without being renamed."""
+    assert Bridge(tmp_path).state_path.name == "state.json"
+    assert Bridge(tmp_path).label == "main"
+
+
+def test_all_instances_finds_every_one_that_published(tmp_path):
+    Bridge(tmp_path).publish({"running": "a"})
+    Bridge(tmp_path, name="two").publish({"running": "b"})
+    Bridge(tmp_path, name="three").publish({"running": "c"})
+    found = {b.label for b in Bridge.all_instances(tmp_path)}
+    assert found == {"main", "two", "three"}
+
+
+def test_instructions_are_addressed_to_one_instance(tmp_path):
+    """Pausing one copy must not pause the others."""
+    a, b = Bridge(tmp_path, name="a"), Bridge(tmp_path, name="b")
+    a.instruct(Instruction(action="pause", reason="only a"))
+    assert a.pending() is not None
+    assert b.pending() is None
+
+
+def test_no_instances_at_all_is_empty_not_an_error(tmp_path):
+    assert Bridge.all_instances(tmp_path / "nothing_here") == []

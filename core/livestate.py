@@ -49,6 +49,13 @@ ACTIONS = {
 }
 
 
+def _slug(name: str) -> str:
+    """A filename-safe instance name. Empty stays empty, meaning the default."""
+    keep = "".join(c if (c.isalnum() or c in "-_") else "-"
+                   for c in str(name).strip().lower())
+    return keep.strip("-")[:32]
+
+
 def _utc() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -107,12 +114,39 @@ class Instruction:
 class Bridge:
     """Read and write the shared files."""
 
-    def __init__(self, root: Path | None = None):
+    def __init__(self, root: Path | None = None, name: str = ""):
+        """`name` separates one running copy from another.
+
+        Several instances can trade different symbols on the same account, so
+        each writes its own state and decision files. They share the broker,
+        which is the single source of truth for positions -- an instance that
+        published its own idea of the position could disagree with the account
+        and there would be no way to tell which was right.
+        """
         self.root = Path(root or LIVE)
-        self.state_path = self.root / "state.json"
-        self.instructions_path = self.root / "instructions.json"
-        self.decisions_path = self.root / "decisions.jsonl"
+        self.name = _slug(name)
+        suffix = f"-{self.name}" if self.name else ""
+        self.state_path = self.root / f"state{suffix}.json"
+        self.instructions_path = self.root / f"instructions{suffix}.json"
+        self.decisions_path = self.root / f"decisions{suffix}.jsonl"
         self.root.mkdir(parents=True, exist_ok=True)
+
+    @classmethod
+    def all_instances(cls, root: Path | None = None) -> list["Bridge"]:
+        """Every instance that has published, newest first."""
+        root = Path(root or LIVE)
+        if not root.exists():
+            return []
+        out = []
+        for f in sorted(root.glob("state*.json")):
+            stem = f.stem                      # "state" or "state-nvda"
+            out.append(cls(root, stem[6:] if stem.startswith("state-") else ""))
+        return sorted(out, key=lambda b: b.state_path.stat().st_mtime,
+                      reverse=True)
+
+    @property
+    def label(self) -> str:
+        return self.name or "main"
 
     # -- app -> Claude ----------------------------------------------------
 

@@ -137,7 +137,7 @@ def _calendar():
     return MarketCalendar.load()
 
 
-bridge = Bridge()
+bridge = Bridge(name=st.session_state.get("instance", ""))
 try:
     calendar = _calendar()
 except CalendarError as exc:
@@ -163,7 +163,8 @@ try:
 except CalendarError:
     session, market_open, in_window, flat_at = None, False, False, None
 
-trade_tab, shop_tab = st.tabs(["**Trade**", "Workshop"])
+trade_tab, board_tab, shop_tab = st.tabs(
+    ["**Trade**", "Dashboard", "Workshop"])
 
 # =========================================================== TRADE
 with trade_tab:
@@ -197,7 +198,7 @@ with trade_tab:
     held = next(iter(positions.values()), None)
     with head[2]:
         stat(st, "Money in the account", f"${account.equity:,.2f}",
-             f"{money.fmt(account.cash)} of it uninvested")
+             f"${account.cash:,.2f} of it uninvested")
     with head[3]:
         if held:
             stat(st, "Holding", f"{held.qty:g} {held.symbol}",
@@ -311,6 +312,13 @@ with trade_tab:
                                  "Raising this trades a stale price.")
         st.caption("Practice account only. The code refuses a live one.")
         st.divider()
+        instance = st.text_input(
+            "This instance", value=st.session_state.get("instance", ""),
+            placeholder="leave blank for the main one",
+            help="Name this copy if you run several. Each keeps its own state "
+                 "and decision log; they share the account, which is the only "
+                 "thing that knows what you really hold.")
+        st.session_state["instance"] = instance
         st.caption(f"Version {current_version().label()}")
 
     if not symbols:
@@ -583,6 +591,134 @@ with trade_tab:
         st.markdown("**Cost paid today**")
         st.plotly_chart(pnl_chart(fills_today, MODE), width="stretch",
                         config={"displayModeBar": False})
+
+
+# ======================================================= DASHBOARD
+with board_tab:
+    st.markdown("### Dashboard")
+    st.caption("Everything at work across every running copy. The account is "
+               "the single source of truth for what you hold — an instance "
+               "publishing its own idea of the position could disagree with "
+               "it, and there would be no way to tell which was right.")
+
+    try:
+        acct = broker.get_account()
+        board_positions = broker.get_positions()
+        board_orders = [o for o in broker.get_open_orders()
+                        if str(getattr(o, "status", "")).lower() in
+                        {"new", "accepted", "partially_filled", "pending_new"}]
+    except BrokerError as exc:
+        st.error(f"Broker unreachable: {exc}")
+        st.stop()
+
+    # Price every position at what it would actually fetch.
+    valued, quotes = [], {}
+    for sym, pos in board_positions.items():
+        try:
+            qbid, qask = broker.get_quote(sym)
+            quotes[sym] = (qbid, qask)
+        except BrokerError:
+            qbid = qask = 0.0
+        v = value_position(pos, qbid, qask)
+        if v:
+            valued.append(v)
+
+    put_in = sum(v.put_in for v in valued)
+    worth = sum(v.worth_now for v in valued)
+    if_sold = sum(v.profit_if_sold for v in valued)
+    committed = sum((o.limit_price or 0) * o.qty for o in board_orders)
+
+    b = st.columns(4)
+    stat(b[0], "Money in the account", f"${acct.equity:,.2f}",
+         f"${acct.cash:,.2f} uninvested")
+    stat(b[1], "At work right now", f"${put_in:,.2f}",
+         f"{len(valued)} position(s)" if valued else "nothing held")
+    stat(b[2], "Worth now", f"${worth:,.2f}" if valued else "—",
+         "marked at the midpoint" if valued else "")
+    stat(b[3], "If you sold everything",
+         f"{'+' if if_sold >= 0 else ''}${if_sold:,.2f}" if valued else "—",
+         "after crossing the spread" if valued else "nothing to sell",
+         "good" if if_sold >= 0 else "bad")
+
+    if committed:
+        st.caption(money.md(
+            f"A further {money.fmt(committed)} is committed to "
+            f"{len(board_orders)} order(s) still waiting to fill. That is not "
+            f"spent yet, and cancels itself if it never fills."))
+
+    # -- what is held ----------------------------------------------------
+    st.divider()
+    st.markdown("**Positions**")
+    if valued:
+        st.dataframe(pd.DataFrame([{
+            "Symbol": v.symbol,
+            "Shares": f"{v.qty:g}",
+            "Bought at": f"{v.avg_price:,.2f}",
+            "Now": f"{v.mid:,.2f}",
+            "Put in": money.fmt(v.put_in),
+            "Worth": money.fmt(v.worth_now),
+            "If sold": money.fmt(v.profit_if_sold),
+            "%": f"{v.profit_pct:+.3f}%",
+            "Break even at": f"{v.breakeven_price:,.2f}",
+        } for v in valued]), width="stretch", hide_index=True)
+    else:
+        st.caption("Flat. Nothing held anywhere.")
+
+    st.markdown("**Orders waiting**")
+    if board_orders:
+        rows = []
+        for o in board_orders:
+            qbid, qask = quotes.get(o.symbol, (0.0, 0.0))
+            if not qbid:
+                try:
+                    qbid, qask = broker.get_quote(o.symbol)
+                except BrokerError:
+                    qbid = qask = 0.0
+            buying = o.side.lower() == "buy"
+            facing = qask if buying else qbid
+            lim = o.limit_price or 0.0
+            rows.append({
+                "Symbol": o.symbol,
+                "Side": "Buy" if buying else "Sell",
+                "Shares": f"{o.qty:g}",
+                "Limit": f"{lim:,.2f}" if lim else "market",
+                "Market": f"{facing:,.2f}" if facing else "—",
+                "Needs to move": (f"{abs(facing - lim):,.2f}"
+                                  if facing and lim else "—"),
+                "Would cost": money.fmt(lim * o.qty) if lim else "—",
+            })
+        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+    else:
+        st.caption("No orders waiting.")
+
+    # -- who is running --------------------------------------------------
+    st.divider()
+    st.markdown("**Running copies**")
+    instances = Bridge.all_instances()
+    if not instances:
+        st.caption("Nothing has published yet. Run a cycle on the Trade tab.")
+    else:
+        rows = []
+        for inst in instances:
+            snap = inst.state()
+            age = inst.state_age_seconds()
+            cand = snap.get("candidate") or {}
+            rows.append({
+                "Instance": inst.label,
+                "Running": snap.get("running") or "nothing",
+                "Its edge": (f"{cand.get('expectancy_bps', 0):+.2f} bps"
+                             if cand else "—"),
+                "Last look": ("never" if age is None else
+                              f"{age:.0f}s ago" if age < 90
+                              else f"{age / 60:.0f}m ago"),
+                "Alive": "yes" if (age is not None and age < 180) else "stale",
+                "Doing": str(snap.get("headline", ""))[:60],
+            })
+        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+        st.caption(
+            "A copy is 'stale' when it has not published for three minutes — "
+            "usually it is simply not running. Its positions still show above, "
+            "because those live at the broker rather than in the app.")
 
 # ======================================================== WORKSHOP
 with shop_tab:
