@@ -283,3 +283,79 @@ def test_a_throttled_cycle_does_not_publish_over_the_real_state(tmp_path):
     before = auto.bridge.state()
     auto.cycle(now=t0 + timedelta(seconds=2))
     assert auto.bridge.state()["headline"] == before["headline"]
+
+
+# -- the ranker is a leaderboard, not a setting ---------------------------
+
+def test_the_chosen_rule_does_not_change_what_is_actually_traded(tmp_path):
+    """The page showed the recommender's pick in a box marked "Running",
+    beside orders a different rule had placed.
+
+    `AutoTrader` builds one `DayTrader` from `DayTradeConfig` and never
+    consults its own choice, so the orders are identical whichever rule wins
+    the ranking. If someone later wires the choice through to execution, this
+    test fails -- and the panel that says "not wired to execution" has to be
+    rewritten at the same time.
+    """
+    when = datetime(2026, 9, 14, 10, 40)
+
+    a, _ = _auto(tmp_path / "a")
+    a.candidates = lambda: [_cand("Keltner breakout", bps=+20.0)]
+    first = a.cycle(now=when, execute=False)
+
+    b, _ = _auto(tmp_path / "b")
+    b.candidates = lambda: [_cand("RSI mean reversion", bps=+19.0)]
+    second = b.cycle(now=when, execute=False)
+
+    assert first.running != second.running, "the ranking really did differ"
+    assert first.intents == second.intents, (
+        "execution now depends on the chosen rule -- the Auto panel says it "
+        "does not, so that copy needs rewriting too")
+
+
+def test_running_nothing_at_all_still_places_the_same_orders(tmp_path):
+    """Even standing the ranker down entirely changes no order. The one
+    thing it does control is whether the loop is allowed to send them."""
+    when = datetime(2026, 9, 14, 10, 40)
+
+    a, _ = _auto(tmp_path / "a")
+    a.candidates = lambda: [_cand("Anything", bps=+20.0)]
+    with_rule = a.cycle(now=when, execute=False)
+
+    b, _ = _auto(tmp_path / "b")
+    b.candidates = lambda: []
+    without = b.cycle(now=when, execute=False)
+
+    assert without.running == ""
+    assert with_rule.intents == without.intents
+
+
+def test_the_executing_rules_measured_edge_is_negative_after_costs(tmp_path):
+    """Pinned because the panel prints it as the headline number. If a
+    re-measurement ever makes it positive, the paragraph under it -- "it runs
+    to test fills, not because it is expected to make money" -- is wrong."""
+    from core.daytrade import MEASURED
+    assert MEASURED.net_bps == pytest.approx(0.67 - 1.59)
+    assert not MEASURED.is_profitable
+    assert MEASURED.t_stat > 1.96, "the gross edge is significant; the cost is the problem"
+
+
+def test_the_trader_is_built_without_reference_to_the_chosen_rule(tmp_path):
+    """Comparing two cycles' intents is not enough on its own.
+
+    `_build_trader` runs once in `__init__`, before anything has been chosen,
+    so a rule that reads `self._running` there sees "" both times and the
+    intents match anyway. Rebuilding it with a choice already in place is what
+    actually exercises the claim on the panel.
+    """
+    auto, _ = _auto(tmp_path)
+
+    auto._running = ""
+    blank = auto._build_trader().cfg
+
+    auto._running = "Keltner breakout"
+    chosen = auto._build_trader().cfg
+
+    assert chosen == blank, (
+        "the executing rule now depends on the ranker's choice -- the Auto "
+        "panel says it does not")

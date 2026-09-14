@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from core import money
 from core.autotrader import AutoConfig, AutoTrader
 from core.broker import BrokerError
-from core.daytrade import DayTradeConfig
+from core.daytrade import MEASURED, DayTradeConfig
 from core.daytrader import DayTrader, DayTraderConfig, NotPaper
 from core.env import load_env
 from core.fills import FillLog, FillRecord
@@ -437,27 +437,49 @@ with trade_tab:
         state = bridge.state()
         age = bridge.state_age_seconds()
 
+        # ------------------------------------------- what actually trades
+        # This panel used to lead with the recommender's top-ranked rule, in
+        # the slot marked "Running", beside the orders a *different* rule had
+        # placed. Nothing switches the rule that trades: `AutoTrader` builds
+        # one DayTrader from DayTradeConfig and never consults its own choice.
+        # So the executing rule goes first, with its own measured figures.
+        st.markdown("")
         s1 = st.columns(4)
-        running = state.get("running") or "nothing"
-        because = state.get("chose_because", "") or "not chosen yet"
-        if len(because) > 96:
-            # Cut at a word, not mid-word: "...best tested rule. Switchin"
-            # reads like the app broke rather than like a summary.
-            because = because[:96].rsplit(" ", 1)[0] + "..."
-        stat(s1[0], "Running", running, because,
-             "good" if state.get("running") else "")
-        cand = state.get("candidate") or {}
-        if cand:
-            stat(s1[1], "Its edge", f"{cand.get('expectancy_bps', 0):+.2f} bps",
-                 money.md(money.brief(cand.get("expectancy_bps", 0) / 100.0,
-                                      "once")),
-                 "good" if cand.get("expectancy_bps", 0) > 0 else "bad")
-            stat(s1[2], "Confidence", f"t = {cand.get('t_stat', 0):+.2f}",
-                 f"{int(cand.get('trades', 0))} trades tested",
-                 "good" if abs(cand.get("t_stat", 0)) >= 1.96 else "bad")
+        stat(s1[0], "What places orders", "Fair value gap",
+             "a limit resting at the midpoint of a three-bar gap")
+        stat(s1[1], "Its edge", f"{MEASURED.net_bps:+.2f} bps",
+             f"{MEASURED.gross_bps:+.2f} gross less {MEASURED.spread_bps:.2f} "
+             f"of spread",
+             "good" if MEASURED.is_profitable else "bad")
+        stat(s1[2], "Measured on", f"{MEASURED.trades:,} trades",
+             f"{MEASURED.window}, t = {MEASURED.t_stat:+.2f} on the gross")
         stat(s1[3], "Last look",
              f"{age:.0f}s ago" if age is not None else "never",
              state.get("headline", ""), "" if (age or 0) < 120 else "bad")
+
+        if not MEASURED.is_profitable:
+            st.caption(
+                f"The gross edge is real and strongly significant, and it is "
+                f"smaller than the spread you pay to collect it — which is "
+                f"the finding, not a bug to tune away. It runs on paper to "
+                f"test whether real fills behave like the backtest assumed, "
+                f"not because it is expected to make money.")
+
+        # ------------------------------------------- the ranker, demoted
+        ranked = state.get("running") or ""
+        cand = state.get("candidate") or {}
+        if ranked:
+            edge = cand.get("expectancy_bps")
+            t = cand.get("t_stat")
+            detail = (f" — {edge:+.2f} bps on {cand.get('symbol', '?')}, "
+                      f"t = {t:+.2f}" if edge is not None and t is not None
+                      else "")
+            st.info(
+                f"**The ranker currently likes {ranked}**{detail}. "
+                f"It is not wired to execution: nothing switches the rule "
+                f"that places orders, so this is a leaderboard, not a "
+                f"setting. It sat in a box marked *Running* for a while, "
+                f"next to orders it had not placed.")
 
         if state.get("blocks"):
             st.warning("**Standing down:**  " + "  ·  ".join(state["blocks"]))

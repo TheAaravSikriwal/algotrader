@@ -73,6 +73,46 @@ WINDOW_START = time(10, 30)
 WINDOW_END = time(15, 30)
 
 
+
+@dataclass(frozen=True)
+class Measured:
+    """What this rule scored, in the window it actually runs.
+
+    Kept next to the rule rather than typed into the page, because the page
+    spent a while showing a *different* rule's figures beside the orders this
+    one placed. A number on screen should be reachable from the thing it
+    describes.
+
+    Source: `research/audit/window_sensitivity.py`, 2021-2026, ten symbols.
+    """
+    window: str
+    trades: int
+    gross_bps: float
+    t_stat: float
+    spread_bps: float
+
+    @property
+    def net_bps(self) -> float:
+        """Gross edge less the spread paid to get it. This is the number."""
+        return self.gross_bps - self.spread_bps
+
+    @property
+    def is_profitable(self) -> bool:
+        return self.net_bps > 0
+
+
+#: The configured window. Gross is strongly significant and smaller than the
+#: spread, which is the whole finding: the edge *is* the liquidity premium.
+MEASURED = Measured(window="10:30-15:30", trades=121_631, gross_bps=0.67,
+                    t_stat=3.85, spread_bps=1.59)
+
+#: What the same rule scores in the opening fifteen minutes, where the edge
+#: actually lives. Shown for contrast; not the configured window, because the
+#: p90 spread there is 10.6 bps and a positive mean is not a positive trade.
+MEASURED_AT_THE_OPEN = Measured(window="09:30-09:45", trades=880,
+                                gross_bps=5.38, t_stat=5.89, spread_bps=3.78)
+
+
 @dataclass(frozen=True)
 class DayTradeConfig:
     symbols: tuple[str, ...] = DEFAULT_SYMBOLS
