@@ -102,7 +102,8 @@ LABELS = {
 def build_steps(current: str, symbols=(), window=("10:30", "15:30"),
                 flatten_at=None, expiry_minutes: int = 60,
                 order_facts: dict | None = None,
-                valuation=None) -> list[Step]:
+                valuation=None, watcher_running: bool = True,
+                past_deadline: bool = False) -> list[Step]:
     """The four boxes, each knowing its own trigger and plan.
 
     `current` is the stage key the account is actually at. BLOCKED is not one
@@ -145,13 +146,24 @@ def build_steps(current: str, symbols=(), window=("10:30", "15:30"),
                     f"break-even once the "
                     f"{'bid reaches' if valuation.qty > 0 else 'ask falls to'} "
                     f"{valuation.breakeven_price:,.2f}.")
+        if past_deadline:
+            hold_for = ("Past the end-of-day deadline and still open. It "
+                        "closes on the next cycle; the stop and the target "
+                        "are still live at the venue in the meantime. " + hold_for)
     else:
         hold_for = ("One of three exits: the profit target at 2R, the stop, "
                     "or the end-of-day close — whichever comes first.")
+    # The flatten needs a cycle to run. The stop and target do not -- they
+    # sit at the venue. Saying "closes automatically" while nothing is
+    # looping is how a position went past its deadline and then overnight.
     hold_plan = ("The stop and target sit at the venue the moment the order "
-                 "fills, so they still work if you close the app."
-                 + (f" Anything still open is closed at {flatten_at}."
-                    if flatten_at else ""))
+                 "fills, so they still work even if nothing is running.")
+    if flatten_at and watcher_running:
+        hold_plan += f" Anything still open is closed at {flatten_at}."
+    elif flatten_at:
+        hold_plan += (f" The {flatten_at} close needs a cycle to run, and "
+                      f"nothing is running — start the background loop or "
+                      f"press Run one cycle before then.")
 
     # 4 -- closed
     closed_for = "Nothing — this trade is finished and the money is back as cash."
@@ -179,7 +191,8 @@ def describe(position=None, order=None, valuation=None, quote=None,
              blocks: list[str] | None = None, flatten_at=None,
              expiry_bars: int = 12, bar_minutes: int = 5,
              closed_today: bool = False, symbols=(),
-             window=("10:30", "15:30")) -> Stage:
+             window=("10:30", "15:30"), watcher_running: bool = True,
+             past_deadline: bool = False) -> Stage:
     """Work out the stage from what the broker actually reports.
 
     Order of checks matters: a held position outranks a resting order, which
@@ -215,7 +228,8 @@ def describe(position=None, order=None, valuation=None, quote=None,
         workflow can never describe a different stage than the headline."""
         stage.steps = build_steps(
             stage.key, symbols=symbols, window=window, flatten_at=flatten_at,
-            expiry_minutes=minutes, order_facts=facts, valuation=valuation)
+            expiry_minutes=minutes, order_facts=facts, valuation=valuation,
+            watcher_running=watcher_running, past_deadline=past_deadline)
         return stage
 
     # -- holding something ------------------------------------------------
@@ -223,8 +237,12 @@ def describe(position=None, order=None, valuation=None, quote=None,
         v = valuation
         long = v.qty > 0
         plan = []
-        if flatten_at:
-            plan.append(f"Closes automatically at {flatten_at} — nothing is "
+        if flatten_at and watcher_running:
+            plan.append(f"Closes at {flatten_at} — the background loop is "
+                        f"running, so nothing is held overnight.")
+        elif flatten_at:
+            plan.append(f"Would close at {flatten_at}, but that needs a cycle "
+                        f"to run and nothing is running. Left alone it is "
                         f"held overnight.")
         plan.append(f"Break even once the {'bid reaches' if long else 'ask falls to'} "
                     f"{v.breakeven_price:,.2f} "

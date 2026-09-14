@@ -359,3 +359,40 @@ def test_the_trader_is_built_without_reference_to_the_chosen_rule(tmp_path):
     assert chosen == blank, (
         "the executing rule now depends on the ranker's choice -- the Auto "
         "panel says it does not")
+
+
+# -- dry run means send nothing -------------------------------------------
+
+def _past_deadline_broker():
+    """Holding something, with the clock past the flatten time."""
+    from core.broker import Position
+    return FakeBroker(bars=_gap_bars(),
+                      positions={"SPY": Position(symbol="SPY", qty=1,
+                                                 avg_price=760.0)})
+
+
+def test_a_dry_run_does_not_flatten(tmp_path):
+    """Found by running it: `autorun.py --dry-run` placed three market orders
+    to close a real position. The flatten branch sat outside the `execute`
+    check, so the one flag whose entire purpose is "send nothing" sent the
+    most consequential order there is."""
+    auto, broker = _auto(tmp_path, broker=_past_deadline_broker())
+    before = len(getattr(broker, "closed", []) or [])
+    c = auto.cycle(now=datetime(2026, 9, 14, 15, 58), execute=False)
+    assert len(getattr(broker, "closed", []) or []) == before, "it sent a close"
+    assert not c.flattened
+    assert any("nothing sent" in b for b in c.blocks)
+
+
+def test_a_real_run_does_flatten(tmp_path):
+    """The other half: gating it must not stop the thing working."""
+    auto, broker = _auto(tmp_path, broker=_past_deadline_broker())
+    c = auto.cycle(now=datetime(2026, 9, 14, 15, 58), execute=True)
+    assert c.flattened or broker.get_positions() == {}
+
+
+def test_a_dry_run_sends_no_opening_orders_either(tmp_path):
+    auto, _ = _auto(tmp_path)
+    auto.candidates = lambda: [_cand("Anything", bps=+20.0)]
+    c = auto.cycle(now=datetime(2026, 9, 14, 10, 40), execute=False)
+    assert c.sent == []

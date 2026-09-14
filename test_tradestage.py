@@ -281,9 +281,11 @@ def test_box_three_names_all_three_exits_before_you_are_in_it():
     assert "close" in three.waiting_for
 
 
-def test_box_three_says_the_brackets_survive_the_app_closing():
+def test_box_three_says_the_brackets_survive_nothing_running():
+    """Wider than "if you close the app": they also survive the background
+    loop dying, which is the case that actually bit."""
     s = describe(flatten_at="15:55")
-    assert "close the app" in s.steps[2].plan
+    assert "even if nothing is running" in s.steps[2].plan
     assert "15:55" in s.steps[2].plan
 
 
@@ -333,3 +335,62 @@ def test_a_long_still_reads_the_way_it_did():
     assert s.headline == "Holding 2 SPY"
     assert "Bought at 100.00" in s.detail
     assert "selling this second" in s.detail
+
+
+# -- promising an automatic close only when something can do it -----------
+
+def test_it_does_not_promise_an_automatic_close_when_nothing_is_running():
+    """The failure this guards: the page said "closes automatically at 15:55
+    — nothing is held overnight" while nothing ran between button presses. A
+    short went five minutes past its deadline and then overnight."""
+    s = describe(flatten_at="15:55", watcher_running=False)
+    plan = s.steps[2].plan
+    assert "needs a cycle to run" in plan
+    assert "nothing is running" in plan
+    assert "Anything still open is closed at" not in plan
+
+
+def test_it_does_promise_the_close_when_the_loop_is_running():
+    s = describe(flatten_at="15:55", watcher_running=True)
+    assert "Anything still open is closed at 15:55" in s.steps[2].plan
+
+
+def test_the_exit_plan_says_overnight_out_loud_when_nothing_is_watching():
+    """Someone holding a position needs the consequence, not the mechanism."""
+    pos, val = _held()
+    s = describe(position=pos, valuation=val, flatten_at="15:55",
+                 watcher_running=False)
+    joined = " ".join(s.exit_plan)
+    assert "held overnight" in joined
+    assert "nothing is running" in joined
+
+
+def test_the_exit_plan_still_reassures_when_the_loop_is_up():
+    pos, val = _held()
+    s = describe(position=pos, valuation=val, flatten_at="15:55",
+                 watcher_running=True)
+    joined = " ".join(s.exit_plan)
+    assert "nothing is held overnight" in joined
+
+
+def test_the_brackets_are_never_described_as_depending_on_the_loop():
+    """They sit at the venue. Whatever else is wrong, those still work, and
+    someone reading a scary message needs to know that."""
+    for running in (True, False):
+        s = describe(flatten_at="15:55", watcher_running=running)
+        assert "still work even if nothing is running" in s.steps[2].plan
+
+
+def test_past_the_deadline_and_still_open_says_so_first():
+    pos, val = _held()
+    s = describe(position=pos, valuation=val, flatten_at="15:55",
+                 past_deadline=True)
+    assert s.steps[2].waiting_for.startswith("Past the end-of-day deadline")
+    assert "still live at the venue" in s.steps[2].waiting_for
+
+
+def test_before_the_deadline_there_is_no_scary_message():
+    pos, val = _held()
+    s = describe(position=pos, valuation=val, flatten_at="15:55",
+                 past_deadline=False)
+    assert "Past the end-of-day deadline" not in s.steps[2].waiting_for

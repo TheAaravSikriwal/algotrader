@@ -33,6 +33,7 @@ from core.env import load_env
 from core.fills import FillLog, FillRecord
 from core.livecharts import (CYCLE_KINDS, candidate_bars, cycle_legend,
                              cycle_strip, pnl_chart, session_chart)
+from core import heartbeat as hb
 from core.livestate import Bridge
 from core.marketclock import CalendarError, MarketCalendar
 from core.positionvalue import value as value_position
@@ -267,6 +268,7 @@ with trade_tab:
         except BrokerError:
             order_quote = None
 
+    watching = hb.alive(name=instance)
     published = bridge.state()
     stage = describe_stage(
         position=held, order=resting, valuation=val, quote=order_quote,
@@ -276,12 +278,33 @@ with trade_tab:
                          for r in bridge.decisions(limit=60)),
         symbols=symbols,
         window=(f"{WINDOW[0]:%H:%M}", f"{WINDOW[1]:%H:%M}"),
-        expiry_bars=DayTradeConfig.expiry_bars)
+        expiry_bars=DayTradeConfig.expiry_bars,
+        # Read, not assumed. The page used to promise an automatic close
+        # while nothing ran between button presses.
+        watcher_running=watching,
+        past_deadline=bool(flat_at and now >= flat_at))
 
     st.markdown(render_workflow(stage.steps, "How one trade runs"),
                 unsafe_allow_html=True)
     st.caption("Hover any box for what has to happen there and what the app "
                "does about it — including the ones it has not reached yet.")
+
+    # The one thing worth interrupting the page for: money in the market,
+    # past the deadline that was supposed to take it out, and nothing running.
+    if held and flat_at and now >= flat_at and not watching:
+        st.error(
+            f"**Past {flat_at:%H:%M} and still holding.** Nothing is running "
+            f"to close it, so it stays open. The stop and target are still "
+            f"live at the venue. Press **Close all**, or start the "
+            f"background loop: `python autorun.py`")
+    elif held and not watching:
+        st.warning(
+            f"**Nothing is running.** The {flat_at:%H:%M} close needs a cycle, "
+            f"and cycles only happen when you press the button. Start the "
+            f"background loop with `python autorun.py` to have it handled."
+            if flat_at else
+            "**Nothing is running.** Cycles only happen when you press the "
+            "button.")
 
     # --------------------------------------------------- the position, once
     # Previously the same trade was described four times over: a headline, a
@@ -453,9 +476,25 @@ with trade_tab:
              "good" if MEASURED.is_profitable else "bad")
         stat(s1[2], "Measured on", f"{MEASURED.trades:,} trades",
              f"{MEASURED.window}, t = {MEASURED.t_stat:+.2f} on the gross")
-        stat(s1[3], "Last look",
-             f"{age:.0f}s ago" if age is not None else "never",
-             state.get("headline", ""), "" if (age or 0) < 120 else "bad")
+        stat(s1[3], "Background loop",
+             "running" if watching else "not running",
+             hb.describe(name=instance) if watching else
+             (f"last cycle {age:.0f}s ago — by hand"
+              if age is not None else "no cycle has run today"),
+             "good" if watching else "bad")
+
+        if not watching:
+            st.warning(
+                "**Auto is not running on its own.** Each press of *Run one "
+                "cycle* is one check and then nothing, so the 15:55 close "
+                "only happens if you are here to press it. Start the loop in "
+                "a terminal and leave it:")
+            st.code("python autorun.py", language="bash")
+            st.caption("It cycles every 30 seconds, keeps going past the "
+                       "window so the flatten actually happens, and stops "
+                       "once the session is over and you are flat. Ctrl-C to "
+                       "stop it. Add `--dry-run` to watch it decide without "
+                       "sending anything.")
 
         if not MEASURED.is_profitable:
             st.caption(

@@ -237,7 +237,13 @@ class AutoTrader:
                       "risk": round(i.qty * i.setup.risk_per_share, 2)}
                      for i in plan.get("intents", [])]
 
-        if plan.get("closing"):
+        if plan.get("closing") and not execute:
+            # `execute=False` means send nothing, and that has to include the
+            # flatten. This branch used to sit outside the check, so
+            # `autorun.py --dry-run` -- a flag whose entire purpose is to send
+            # nothing -- placed market orders to close real positions.
+            c.blocks.append("past the deadline: would close out (nothing sent)")
+        elif plan.get("closing"):
             c.flattened = plan.get("flattened") or self._trader.flatten()
             self.bridge.record("flatten", reason="past the deadline",
                                result=c.flattened)
