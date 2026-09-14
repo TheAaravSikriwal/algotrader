@@ -28,6 +28,7 @@ from core.env import load_env
 from core.marketclock import CalendarError, MarketCalendar
 from core.recommend import best_intraday, load_intraday, rank
 from core.ui import active_mode, inject_css, page_header, plain, tile
+from core.version import current as current_version
 
 load_env()
 
@@ -152,3 +153,13 @@ st.caption(
     "with fake money and the code refuses a live one. Alpaca's free data is "
     "15 minutes delayed, and the loop stands down rather than trading a stale "
     "price — see research/PAPER_TRADING_LIMITS.md.")
+
+_v = current_version()
+if _v.stale:
+    st.warning(
+        f"**The code changed after this app started.** You are looking at "
+        f"pages from `{_v.commit}` but the modules behind them were loaded "
+        f"earlier. Close the window and reopen it — Streamlit caches imports, "
+        f"so a reload is not enough.")
+st.caption(f"Version {_v.label()}"
+           + (f" — {_v.subject}" if _v.subject else ""))
