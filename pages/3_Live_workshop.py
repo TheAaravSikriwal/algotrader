@@ -236,10 +236,16 @@ if plan:
 # ------------------------------------------------------------- 4. fill quality
 st.divider()
 step(4, "Did the orders actually fill?")
-plain("**This is the measurement that matters.** Fifty trades cannot tell a "
-      "3 basis point edge from zero, so the profit column is noise. Whether "
-      "your limit orders fill the way the backtest assumed is answerable, and "
-      "it is the assumption every result here rests on.")
+st.warning(
+    "**Measured 14 Sept: the paper account cannot answer this.** A limit "
+    "placed exactly at the bid filled in two seconds. On a real venue that "
+    "order joins the back of the queue and fills only when someone sells "
+    "into it — which is disproportionately when you are wrong. Filling "
+    "instantly means the simulator uses the same rule as the backtest, so "
+    "these numbers confirm the assumption rather than test it. A round trip "
+    "also cost 0.13 bps against a 2.0 bps quoted spread.\n\n"
+    "See `research/PAPER_TRADING_LIMITS.md`. Read the fill rate below as an "
+    "upper bound — the plumbing is real, the realism is not.")
 
 fills = FillLog(trader.fills.path).frame()
 if fills.empty:
@@ -267,7 +273,9 @@ else:
         st.error("**The backtest's assumptions are not holding:**\n\n"
                  + "\n".join(f"- {r}" for r in v["reasons"]))
     else:
-        st.success("Real fills match what the backtest assumed, so far.")
+        st.success("Real fills match what the backtest assumed, so far — "
+                   "which on a paper account is close to guaranteed, for the "
+                   "reason in the box above.")
 
     with st.expander("Every order"):
         cols = [c for c in ["ts", "symbol", "side", "qty", "limit_price",
