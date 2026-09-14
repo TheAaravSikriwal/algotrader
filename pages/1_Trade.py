@@ -34,6 +34,19 @@ from core.marketclock import CalendarError, MarketCalendar
 from core.recommend import load_intraday
 from core.ui import active_mode, inject_css, page_header, plain, step, tile
 
+def _cost_of(candidate) -> float:
+    """The cost charged in that candidate's backtest, from its note.
+
+    The note reads "62% win, 17.99 bps before 4.00 bps of cost". Pulling the
+    figure back out beats threading another field through the CSV for one
+    sentence of copy, and falls back to zero rather than guessing.
+    """
+    import re
+
+    m = re.search(r"before ([\d.]+) bps of cost", candidate.note or "")
+    return float(m.group(1)) if m else 0.0
+
+
 load_env()
 st.set_page_config(page_title="Trade", layout="wide")
 mode = active_mode()
@@ -129,7 +142,34 @@ if how == "Run a base algorithm":
         by_name = {}
         for c in pool:
             by_name.setdefault(c.strategy, []).append(c)
-        chosen = st.selectbox("Rule", tested)
+
+        # Order by evidence, not alphabetically. The alphabetical default put
+        # ADX trend first -- a rule whose gross edge of 1.60 bps is entirely
+        # eaten by a 1.59 bps spread -- which is a poor thing to greet someone
+        # with on the page where they choose what to run.
+        def _rank_key(name: str):
+            """Rules with a usable sample come first, best expectancy within.
+
+            Sorting on expectancy alone put "Buy the dip, +205.87 bps" at the
+            top -- on three trades. That is the same trap the recommender
+            refuses by design, reintroduced in a sort key, and it would have
+            been the first thing offered on the page where you choose what to
+            run.
+            """
+            usable = [c for c in by_name[name] if c.credible]
+            if usable:
+                return (1, max(c.expectancy_pct for c in usable))
+            return (0, max(c.expectancy_pct for c in by_name[name]))
+
+        tested = sorted(tested, key=_rank_key, reverse=True)
+        n_usable = sum(1 for n in tested if any(c.credible for c in by_name[n]))
+        chosen = st.selectbox(
+            "Rule", tested,
+            help="Rules with at least 100 tested trades come first, ordered "
+                 "by expectancy. Below those sit rules whose sample is too "
+                 "small to judge, however large their average looks.")
+        st.caption(f"{n_usable} of {len(tested)} rules have a usable sample. "
+                   f"The rest are listed below them.")
         mine = sorted(by_name[chosen], key=lambda c: -c.expectancy_pct)
         best = mine[0]
 
@@ -146,15 +186,33 @@ if how == "Run a base algorithm":
              f"{best.trades:.0f} trades, 100 is the floor",
              "good" if best.credible else "bad")
 
+        gross = best.expectancy_pct + _cost_of(best)
         if best.expectancy_pct <= 0:
-            st.error("This rule loses money per trade on the tested data. "
-                     "No position size fixes that.")
+            st.error(money.md(
+                f"**Loses money per trade** on the tested data. No position "
+                f"size fixes that — larger bets only lose it faster."))
+        elif abs(best.expectancy_pct) < 0.5:
+            # Below half a basis point the number is zero at any size a retail
+            # account trades. Calling it "positive" is arithmetically true and
+            # practically false.
+            st.error(money.md(
+                f"**Effectively zero.** {best.expectancy_pct:+.2f} bps a trade "
+                f"is {money.fmt(money.amount(best.expectancy_pct / 100.0, 1_000))} "
+                f"on a $1,000 trade — nothing, at any size you would trade. "
+                f"It made {gross:.2f} bps before costs and the spread took "
+                f"almost all of it."))
         elif not best.credible:
             st.warning("Too few trades to judge. Treat anything it does as "
                        "an experiment.")
         elif not best.significant:
-            st.warning("Positive but inside the noise. The best-evidenced "
-                       "guess, not a proven edge.")
+            st.warning(money.md(
+                f"**Positive but inside the noise.** Worth "
+                f"{money.fmt(money.amount(best.expectancy_pct / 100.0, 1_000))} "
+                f"a trade on $1,000 if real, but t={best.t_stat:.2f} cannot "
+                f"tell it from luck."))
+        else:
+            st.success("Positive and statistically distinguishable from zero "
+                       "— rare enough here to be worth double-checking.")
     else:
         st.warning("Nothing has been backtested as a day trade yet. Open the "
                    "backtest lab first.")
