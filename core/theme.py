@@ -20,6 +20,9 @@ LIGHT = {
     "drawdown": "#e34948",
     "good": "#0ca30c",
     "critical": "#d03b3b",
+    # holding pattern -- deliberately not a red, so "nothing happened" never
+    # reads as "a position was closed"
+    "pending": "#e0b528",
     # diverging arms for the monthly-returns grid
     "div_neg": "#d03b3b",
     "div_mid": "#f0efec",
@@ -40,6 +43,7 @@ DARK = {
     "drawdown": "#e66767",
     "good": "#0ca30c",
     "critical": "#d03b3b",
+    "pending": "#d8ad2e",
     "div_neg": "#d03b3b",
     "div_mid": "#383835",
     "div_pos": "#3987e5",

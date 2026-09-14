@@ -10,6 +10,8 @@ Everything is drawn on the Eastern clock, matching the bar index.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from datetime import datetime, time
 
 import pandas as pd
@@ -115,6 +117,37 @@ def session_chart(bars: pd.DataFrame, mode: str = "light",
     return fig
 
 
+@dataclass(frozen=True)
+class CycleKind:
+    """One outcome a cycle can have, and how it is drawn and described.
+
+    The strip's colours and the page's legend both read this. They used to be
+    written out separately and had drifted: "watched, no setup" was labelled
+    blue and drawn orange, and "told to wait" was labelled orange and drawn
+    the same green as "placed an order" -- so the one block that means a trade
+    happened looked like the one that means nothing did.
+    """
+    token: str        #: key into the theme palette
+    swatch: str       #: the emoji in the legend, which has to match that colour
+    words: str        #: what it means, in the legend and in the summary line
+
+
+#: In the order they are listed to the reader.
+CYCLE_KINDS = {
+    "order":     CycleKind("good",     "🟩", "placed an order"),
+    "flatten":   CycleKind("critical", "🟥", "closed out"),
+    "watching":  CycleKind("series_1", "🟦", "watched, no setup"),
+    "blocked":   CycleKind("muted",    "⬜",     "stood down (a rail blocked it)"),
+    "throttled": CycleKind("pending",  "🟨", "told to wait (you clicked too soon)"),
+}
+
+
+def cycle_legend() -> str:
+    """The caption under the strip, built from the same mapping it is drawn from."""
+    return "Each block is one cycle:  " + "  ·  ".join(
+        f"{v.swatch} {v.words}" for v in CYCLE_KINDS.values())
+
+
 def cycle_strip(cycles: list[dict], mode: str = "light",
                 height: int = 96) -> go.Figure:
     """Every cycle as a block on a timeline, newest on the right.
@@ -131,9 +164,7 @@ def cycle_strip(cycles: list[dict], mode: str = "light",
         fig.update_layout(margin=dict(l=8, r=8, t=8, b=8))
         return fig
 
-    palette = {"order": t["good"], "flatten": t["critical"],
-               "throttled": t["series_3"], "blocked": t["muted"],
-               "watching": t["series_2"]}
+    palette = {k: t[v.token] for k, v in CYCLE_KINDS.items()}
     fig.add_trace(go.Bar(
         x=list(range(len(cycles))),
         y=[1] * len(cycles),

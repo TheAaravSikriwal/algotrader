@@ -31,8 +31,8 @@ from core.daytrade import DayTradeConfig
 from core.daytrader import DayTrader, DayTraderConfig, NotPaper
 from core.env import load_env
 from core.fills import FillLog, FillRecord
-from core.livecharts import (candidate_bars, cycle_strip, pnl_chart,
-                             session_chart)
+from core.livecharts import (CYCLE_KINDS, candidate_bars, cycle_legend,
+                             cycle_strip, pnl_chart, session_chart)
 from core.livestate import Bridge
 from core.marketclock import CalendarError, MarketCalendar
 from core.positionvalue import value as value_position
@@ -572,23 +572,16 @@ with trade_tab:
                 bridge.decisions_path.unlink(missing_ok=True)
                 bridge.state_path.unlink(missing_ok=True)
             st.rerun()
-        st.caption(
-            "Each block is one cycle:  "
-            "🟩 placed an order  ·  🟥 closed out  ·  "
-            "🟦 watched, no setup  ·  ⬜ stood down (a rail blocked it)  ·  "
-            "🟧 told to wait (you clicked too soon).")
+        st.caption(cycle_legend())
         st.plotly_chart(cycle_strip(cycles[-60:], MODE), width="stretch",
                         config={"displayModeBar": False})
 
         counts: dict[str, int] = {}
         for c in cycles:
             counts[c["kind"]] = counts.get(c["kind"], 0) + 1
-        ordered = [k for k in ("order", "flatten", "watching", "blocked",
-                               "throttled") if k in counts]
-        words = {"order": "placed an order", "flatten": "closed out",
-                 "watching": "watched, no setup",
-                 "blocked": "stood down", "throttled": "was told to wait"}
-        summary = ", ".join(f"**{counts[k]}** {words[k]}" for k in ordered)
+        summary = ", ".join(
+            f"{v.swatch} **{counts[k]}** {v.words}"
+            for k, v in CYCLE_KINDS.items() if k in counts)
         last = cycles[-1]
         st.markdown(
             f"{len(cycles)} cycles so far — {summary}. "
