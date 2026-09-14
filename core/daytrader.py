@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 
@@ -77,6 +77,13 @@ class DayTraderConfig:
     max_open_positions: int = 2
     max_order_notional: float | None = None
     bars_lookback: int = 120               # enough for swings plus context
+    #: Refuse to act on a bar older than this. Alpaca's free plan delays the
+    #: consolidated feed by 15 minutes, and a limit price derived from a
+    #: quarter-hour-old bar is not the price the rule was tested on -- it
+    #: either fills instantly because the market already went there, or never
+    #: fills at all. Both corrupt the fill-rate measurement this loop exists
+    #: to make.
+    max_bar_age_minutes: float = 6.0
 
 
 class DayTrader:
@@ -118,6 +125,21 @@ class DayTrader:
             self._save(baseline_day=today, baseline_equity=float(account.equity))
             return float(account.equity)
         return float(s.get("baseline_equity", account.equity))
+
+    def taken_today(self, symbol: str) -> int:
+        """Orders already sent for `symbol` today, from the fill log.
+
+        The daily cap has to count what was actually traded rather than what
+        was scanned. Reading it back from the log also means the count
+        survives a page reload, which an in-memory counter would not.
+        """
+        df = self.fills.frame()
+        if df.empty or "ts" not in df or "symbol" not in df:
+            return 0
+        when = pd.to_datetime(df["ts"], errors="coerce", utc=True)
+        today = pd.Timestamp.now(tz="UTC").normalize()
+        same = (df["symbol"].astype(str).str.upper() == symbol.upper())
+        return int(((when >= today) & same).sum())
 
     # -- rails -----------------------------------------------------------
 
@@ -172,6 +194,7 @@ class DayTrader:
         closing = now >= flatten_at
 
         intents: list[Intent] = []
+        stale: list[tuple[str, float]] = []
         if not blocks and not closing:
             room = self.cfg.max_open_positions - len(positions)
             cap = self.order_cap(account)
@@ -203,7 +226,23 @@ class DayTrader:
                 if len(today) < 3:
                     continue
 
-                setups = find_setups(today, symbol, self.cfg.rule, session)
+                age = (now - today.index[-1].to_pydatetime()).total_seconds() / 60.0
+                if age > self.cfg.max_bar_age_minutes:
+                    stale.append((symbol, age))
+                    continue
+
+                # Scan without the per-day cap, then apply the cap to trades
+                # actually TAKEN today. The cap is a limit on how much you
+                # trade, not on how much of the day the loop is allowed to
+                # look at -- and conflating the two made the loop dead after
+                # its first setup: find_setups returned only the earliest one,
+                # while the staleness check below demands the latest, so the
+                # two could never agree again for the rest of the session.
+                if self.taken_today(symbol) >= self.cfg.rule.max_trades_per_symbol_per_day:
+                    continue
+
+                scan = replace(self.cfg.rule, max_trades_per_symbol_per_day=999)
+                setups = find_setups(today, symbol, scan, session)
                 if not setups:
                     continue
                 setup = setups[-1]
@@ -224,8 +263,17 @@ class DayTrader:
                                       reference_px=float(today["close"].iloc[-1])))
                 room -= 1
 
+        if stale:
+            worst = max(a for _, a in stale)
+            blocks.append(
+                f"market data is {worst:.0f} minutes behind "
+                f"({', '.join(sym for sym, _ in stale)}). Alpaca's free plan "
+                f"delays the full feed by 15 minutes, and a limit price from a "
+                f"bar that old is not the one the rule was tested on.")
+
         return {
             "intents": intents,
+            "stale": stale,
             "blocks": blocks,
             "closing": closing,
             "session": session,

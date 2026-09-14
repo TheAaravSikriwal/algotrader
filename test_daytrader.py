@@ -6,7 +6,7 @@ live, holding overnight, or sizing past the limit it promised.
 """
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import pandas as pd
 import pytest
@@ -346,3 +346,68 @@ def test_bars_stamped_after_the_planning_moment_are_ignored():
 
     # Planning one bar later: that bar is now the newest, so the gap is stale.
     assert t.plan(now=later.index[0].to_pydatetime())["intents"] == []
+
+
+def test_a_setup_later_in_the_day_is_still_actionable():
+    """The bug that made the loop dead after its first setup.
+
+    find_setups applies the per-day cap while scanning, so with a cap of one
+    it returned only the EARLIEST setup of the day -- while plan() acts only
+    on a setup from the bar that just closed. After the first one, the two
+    could never agree again, and the loop silently stopped trading for the
+    rest of the session while reporting no blocks at all.
+    """
+    early = _gap_bars(start="2026-09-14 10:30")
+    flat = pd.DataFrame(
+        [(13, 13.2, 12.9, 13.0)] * 6,
+        columns=["open", "high", "low", "close"],
+        index=pd.date_range(early.index[-1] + pd.Timedelta("5min"),
+                            periods=6, freq="5min")).assign(volume=1000.0)
+    later = _gap_bars(start=str(flat.index[-1] + pd.Timedelta("5min")))
+    bars = pd.concat([early, flat, later])
+
+    t, _ = _trader(broker=FakeBroker(bars=bars))
+    plan = t.plan(now=bars.index[-1].to_pydatetime())
+    assert plan["intents"], "a fresh setup later in the day must still fire"
+    assert plan["intents"][0].setup.signal_ts == bars.index[-1]
+
+
+def test_the_daily_cap_counts_orders_actually_sent(tmp_path):
+    """The cap limits how much you trade, not how much the loop may look at."""
+    t, broker = _trader()
+    assert t.taken_today("SPY") == 0
+    t.execute(t.plan(now=datetime(2026, 9, 14, 10, 40))["intents"])
+    assert t.taken_today("SPY") == 1
+    assert t.taken_today("QQQ") == 0, "counted per symbol, not in total"
+
+    blocked = t.plan(now=datetime(2026, 9, 14, 10, 40))
+    assert blocked["intents"] == [], "the cap applies once a trade is on record"
+
+
+def test_stale_market_data_blocks_trading():
+    """Alpaca's free plan delays the full feed by 15 minutes.
+
+    A limit price derived from a bar that old either fills instantly, because
+    the market already went there, or never fills at all. Both corrupt the
+    fill-rate measurement the loop exists to produce, so it stands down and
+    says why rather than trading on it.
+    """
+    bars = _gap_bars(start="2026-09-14 10:30")
+    t, _ = _trader(broker=FakeBroker(bars=bars))
+    fresh = bars.index[-1].to_pydatetime() + timedelta(minutes=3)
+    stale = bars.index[-1].to_pydatetime() + timedelta(minutes=15)
+
+    assert t.plan(now=fresh)["intents"], "3 minutes old is fine"
+
+    blocked = t.plan(now=stale)
+    assert blocked["intents"] == []
+    assert any("minutes behind" in b for b in blocked["blocks"])
+
+
+def test_the_staleness_limit_is_configurable():
+    """Someone on a real-time feed should not be held to a free-tier limit."""
+    bars = _gap_bars(start="2026-09-14 10:30")
+    late = bars.index[-1].to_pydatetime() + timedelta(minutes=15)
+    cfg = DayTraderConfig(symbols=("SPY",), max_bar_age_minutes=30.0)
+    t, _ = _trader(broker=FakeBroker(bars=bars), cfg=cfg)
+    assert t.plan(now=late)["intents"], "a 30 minute tolerance permits it"
