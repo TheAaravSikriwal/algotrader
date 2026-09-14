@@ -110,7 +110,7 @@ def session_chart(bars: pd.DataFrame, mode: str = "light",
                 hovertext=f"{c.get('label', 'cycle')}"))
 
     apply_layout(fig, mode, "", height)
-    fig.update_layout(xaxis_rangeslider_visible=False,
+    fig.update_layout(xaxis_rangeslider_visible=False, hovermode="closest",
                       margin=dict(l=8, r=8, t=8, b=8))
     return fig
 
@@ -146,7 +146,7 @@ def cycle_strip(cycles: list[dict], mode: str = "light",
 
     apply_layout(fig, mode, "", height)
     fig.update_layout(
-        margin=dict(l=8, r=8, t=4, b=4), bargap=0.18,
+        margin=dict(l=8, r=8, t=4, b=4), bargap=0.18, hovermode="closest",
         xaxis=dict(visible=False), yaxis=dict(visible=False, range=[0, 1.1]))
     return fig
 
@@ -178,7 +178,7 @@ def pnl_chart(fills: pd.DataFrame, mode: str = "light",
         fill="tozeroy", name="cost", showlegend=False,
         hovertemplate="cost so far $%{y:.2f}<extra></extra>"))
     apply_layout(fig, mode, "", height)
-    fig.update_layout(margin=dict(l=8, r=8, t=8, b=8),
+    fig.update_layout(margin=dict(l=8, r=8, t=8, b=8), hovermode="closest",
                       yaxis_title=None, xaxis_title=None)
     return fig
 
@@ -212,6 +212,6 @@ def candidate_bars(candidates, mode: str = "light",
         showlegend=False))
     fig.add_vline(x=0, line_color=t["muted"], line_width=1)
     apply_layout(fig, mode, "", height)
-    fig.update_layout(margin=dict(l=8, r=8, t=8, b=8),
+    fig.update_layout(margin=dict(l=8, r=8, t=8, b=8), hovermode="closest",
                       xaxis_title="basis points per trade")
     return fig

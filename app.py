@@ -35,6 +35,7 @@ from core.livecharts import (candidate_bars, cycle_strip, pnl_chart,
                              session_chart)
 from core.livestate import Bridge
 from core.marketclock import CalendarError, MarketCalendar
+from core.positionvalue import value as value_position
 from core.recommend import load_intraday, rank
 from core.ui import active_mode, inject_css
 from core.version import current as current_version
@@ -64,6 +65,30 @@ st.markdown("""
   .warn  { background: rgba(230,160,60,.18);  color: #b97f22; }
   .stop  { background: rgba(220,90,90,.18);   color: #c0504d; }
 </style>""", unsafe_allow_html=True)
+
+
+def once_only(key: str) -> bool:
+    """True the first time a given click is handled, False on any replay.
+
+    Streamlit reruns the whole script constantly, and a reconnecting session
+    can re-deliver a widget's state. For a button that only draws a chart
+    that is harmless; for one that sends an order it is not. Today a buy and
+    a flatten both fired on this page with nobody pressing anything, so every
+    button that touches the account now carries a token and refuses to act
+    twice on the same one.
+    """
+    import uuid
+
+    seen = st.session_state.setdefault("_handled", set())
+    token = st.session_state.get(f"_token_{key}")
+    if token is None:
+        token = uuid.uuid4().hex
+        st.session_state[f"_token_{key}"] = token
+    if token in seen:
+        return False
+    seen.add(token)
+    st.session_state[f"_token_{key}"] = uuid.uuid4().hex
+    return True
 
 
 def cycle_kind(row: dict) -> str:
@@ -171,14 +196,54 @@ with trade_tab:
 
     held = next(iter(positions.values()), None)
     with head[2]:
-        stat(st, "Account", f"${account.equity:,.0f}", "practice money")
+        stat(st, "Money in the account", f"${account.equity:,.2f}",
+             f"{money.fmt(account.cash)} of it uninvested")
     with head[3]:
         if held:
-            stat(st, "Open", f"{held.qty:g} {held.symbol}",
-                 f"{money.fmt(held.unrealized_pl)} unrealised",
-                 "good" if held.unrealized_pl >= 0 else "bad")
+            stat(st, "Holding", f"{held.qty:g} {held.symbol}",
+                 f"bought at {held.avg_price:,.2f}")
         else:
-            stat(st, "Open", "flat", "nothing held")
+            stat(st, "Holding", "nothing", "flat")
+
+    # ------------------------------------------------- the money, plainly
+    val = None
+    if held:
+        try:
+            bid, ask = broker.get_quote(held.symbol)
+            val = value_position(held, bid, ask)
+        except BrokerError:
+            val = None
+
+    if val:
+        st.markdown("")
+        m = st.columns(4)
+        stat(m[0], "You put in", f"${val.put_in:,.2f}",
+             f"{val.shares:g} {val.symbol} at {val.avg_price:,.2f}")
+        stat(m[1], "Worth right now", f"${val.worth_now:,.2f}",
+             f"mid {val.mid:,.2f}  ·  bid {val.bid:,.2f} / ask {val.ask:,.2f}")
+        tone = "good" if val.profit_if_sold >= 0 else "bad"
+        stat(m[2], "If you sold this second",
+             f"{'+' if val.profit_if_sold >= 0 else ''}"
+             f"${val.profit_if_sold:,.2f}",
+             f"{val.profit_pct:+.3f}% of what you put in", tone)
+        stat(m[3], "You would receive", f"${val.if_sold_now:,.2f}",
+             f"selling at the {'bid' if val.is_long else 'ask'} "
+             f"{val.exit_price:,.2f}")
+
+        # The gap between the two profit numbers is the point of showing both.
+        st.caption(
+            f"Marked at the midpoint it looks like "
+            f"{money.fmt(val.profit_at_mid)}, but selling means "
+            f"{'hitting the bid' if val.is_long else 'lifting the ask'}, "
+            f"so {money.fmt(val.spread_cost)} of that is the spread. "
+            f"You break even once the "
+            f"{'bid reaches' if val.is_long else 'ask falls to'} "
+            f"{val.breakeven_price:,.2f} — "
+            f"{abs(val.move_to_breakeven_pct):.3f}% away. "
+            f"Sitting exactly at your entry price is a small loss, not flat.")
+    elif held:
+        st.caption("No usable quote right now, so there is no honest number "
+                   "to show for what this is worth.")
 
     st.divider()
 
@@ -235,7 +300,10 @@ with trade_tab:
             st.session_state["paused"] = auto.cfg.paused
             st.rerun()
         if c[1].button("■ Close all", width="stretch"):
-            auto._trader.flatten()
+            if once_only("auto_close"):
+                done = auto._trader.flatten()
+                bridge.record("flatten", result=done,
+                              headline="Closed out (you pressed Close all)")
             st.rerun()
         if wait > 0:
             st.caption(
@@ -327,6 +395,9 @@ with trade_tab:
         go_col, close_col = st.columns([1, 1])
         if go_col.button(f"{side.title()} {qty} {sym}", type="primary",
                          disabled=bool(blocks), width="stretch"):
+            if not once_only("manual_buy"):
+                st.caption("Already handled that click.")
+                st.stop()
             try:
                 order = broker.submit_order(
                     sym, int(qty), side, order_type="limit",
@@ -347,8 +418,15 @@ with trade_tab:
             except BrokerError as exc:
                 st.error(f"Rejected: {exc}")
         if close_col.button("Close everything now", width="stretch"):
-            st.dataframe(pd.DataFrame(trader.flatten()), width="stretch",
-                         hide_index=True)
+            if once_only("manual_close"):
+                done = trader.flatten()
+                bridge.record("flatten", result=done,
+                              headline="Closed out (you pressed Close "
+                                       "everything now)")
+                st.dataframe(pd.DataFrame(done), width="stretch",
+                             hide_index=True)
+            else:
+                st.caption("Already handled that click.")
 
     # -------------------------------------------------------- the picture
     # ------------------------------------------------- the cycle timeline

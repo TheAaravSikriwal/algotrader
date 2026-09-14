@@ -178,6 +178,29 @@ class AlpacaBroker(Broker):
         return normalise(df).tail(limit)
 
     # ---- orders ---------------------------------------------------------
+    def get_quote(self, symbol: str) -> tuple[float, float]:
+        """Live bid and ask, for pricing what a position is actually worth.
+
+        Reads the same feed as the bars. On the free plan that has to be IEX:
+        recent SIP quotes are refused outright rather than delayed, so asking
+        for them raises instead of returning something stale.
+
+        Returns (0.0, 0.0) when no usable quote came back, which callers treat
+        as "no valuation" rather than as a price of zero.
+        """
+        from alpaca.data.enums import DataFeed
+        from alpaca.data.requests import StockLatestQuoteRequest
+
+        chosen = (self.feed or "iex").lower()
+        try:
+            q = self._data.get_stock_latest_quote(StockLatestQuoteRequest(
+                symbol_or_symbols=symbol.upper(),
+                feed=DataFeed.IEX if chosen == "iex" else DataFeed.SIP,
+            ))[symbol.upper()]
+        except Exception as exc:                      # noqa: BLE001
+            raise BrokerError(f"no quote for {symbol}: {exc}") from exc
+        return float(q.bid_price or 0.0), float(q.ask_price or 0.0)
+
     def submit_order(self, symbol: str, qty: float, side: str,
                      order_type: str = "market", limit_price: float | None = None,
                      time_in_force: str = "day",
