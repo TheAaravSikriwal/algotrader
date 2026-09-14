@@ -4,14 +4,7 @@
     {
       "name": "algotrader",
       "runtimeExecutable": ".venv/Scripts/streamlit.exe",
-      "runtimeArgs": [
-        "run",
-        "app.py",
-        "--server.port",
-        "8501",
-        "--server.headless",
-        "true"
-      ],
+      "runtimeArgs": ["run", "app.py", "--server.port", "8501", "--server.headless", "true"],
       "port": 8501
     }
   ]

@@ -36,7 +36,8 @@ from core.livecharts import (CYCLE_KINDS, candidate_bars, cycle_legend,
 from core.livestate import Bridge
 from core.marketclock import CalendarError, MarketCalendar
 from core.positionvalue import value as value_position
-from core.tradestage import SEQUENCE, TITLES, describe as describe_stage
+from core.tradestage import describe as describe_stage
+from core.workflow import render as render_workflow
 from core.recommend import load_intraday, rank
 from core.ui import active_mode, inject_css
 from core.version import current as current_version
@@ -90,29 +91,6 @@ def once_only(key: str) -> bool:
     seen.add(token)
     st.session_state[f"_token_{key}"] = uuid.uuid4().hex
     return True
-
-
-def stepper(stage) -> str:
-    """Four boxes, the current one lit. The question this page kept failing to
-    answer was "what is happening right now", and a row of identical grey
-    blocks answered "it ran" instead."""
-    out = ['<div style="display:flex;gap:8px;margin:6px 0 14px">']
-    for i, key in enumerate(SEQUENCE):
-        done = i < stage.index
-        here = i == stage.index
-        if here:
-            bg, fg, bd = "rgba(77,190,130,.16)", "var(--good)", "var(--good)"
-        elif done:
-            bg, fg, bd = "transparent", "rgba(128,128,128,.85)", "rgba(128,128,128,.35)"
-        else:
-            bg, fg, bd = "transparent", "rgba(128,128,128,.45)", "rgba(128,128,128,.18)"
-        out.append(
-            f'<div style="flex:1;padding:9px 12px;border-radius:8px;'
-            f'background:{bg};border:1px solid {bd};color:{fg};'
-            f'font-size:13px;font-weight:{"650" if here else "500"}">'
-            f'{"● " if here else ""}{TITLES[key]}</div>')
-    out.append("</div>")
-    return "".join(out)
 
 
 def cycle_kind(row: dict) -> str:
@@ -186,6 +164,35 @@ try:
     flat_at = session.flatten_deadline(5)
 except CalendarError:
     session, market_open, in_window, flat_at = None, False, False, None
+
+# --------------------------------------------------------------- settings
+# Read before the tabs, not after. The workflow strip on the Trade tab
+# names the symbols and the window it is watching, and it cannot name
+# something the script has not read yet.
+with st.sidebar:
+    st.markdown("### Settings")
+    symbols = st.multiselect(
+        "Trade", ["SPY", "QQQ", "IWM", "AAPL", "NVDA", "AMD", "TSLA"],
+        default=["SPY", "QQQ"])
+    risk_pct = st.slider("Risk per trade (%)", 0.1, 2.0, 0.5, 0.1)
+    max_loss = st.slider("Stop for the day at (%)", 0.5, 5.0, 2.0, 0.5)
+    max_age = st.slider("Refuse bars older than (min)", 2.0, 20.0, 6.0, 1.0,
+                        help="The free data feed is 15 minutes behind. "
+                             "Raising this trades a stale price.")
+    st.caption("Practice account only. The code refuses a live one.")
+    st.divider()
+    instance = st.text_input(
+        "This instance", value=st.session_state.get("instance", ""),
+        placeholder="leave blank for the main one",
+        help="Name this copy if you run several. Each keeps its own state "
+             "and decision log; they share the account, which is the only "
+             "thing that knows what you really hold.")
+    st.session_state["instance"] = instance
+    st.caption(f"Version {current_version().label()}")
+
+if not symbols:
+    st.info("Pick something to trade in the sidebar.")
+    st.stop()
 
 trade_tab, board_tab, shop_tab = st.tabs(
     ["**Trade**", "Dashboard", "Workshop"])
@@ -261,9 +268,16 @@ with trade_tab:
         blocks=published.get("blocks") or [],
         flatten_at=f"{flat_at:%H:%M}" if flat_at else None,
         closed_today=any(cycle_kind(r) == "flatten"
-                         for r in bridge.decisions(limit=60)))
+                         for r in bridge.decisions(limit=60)),
+        symbols=symbols,
+        window=(f"{WINDOW[0]:%H:%M}", f"{WINDOW[1]:%H:%M}"),
+        expiry_bars=DayTradeConfig.expiry_bars)
 
-    st.markdown(stepper(stage), unsafe_allow_html=True)
+    st.markdown(render_workflow(stage.steps, "How one trade runs"),
+                unsafe_allow_html=True)
+    st.caption("Hover any box to see what has to happen there and what the "
+               "app does about it — including the ones it has not "
+               "reached yet.")
     st.markdown(f"#### {stage.headline}")
     st.markdown(f'<div style="font-size:15px;line-height:1.55">{stage.detail}'
                 f'</div>', unsafe_allow_html=True)
@@ -357,31 +371,6 @@ with trade_tab:
 
     st.divider()
 
-    # ------------------------------------------------------------ settings
-    with st.sidebar:
-        st.markdown("### Settings")
-        symbols = st.multiselect(
-            "Trade", ["SPY", "QQQ", "IWM", "AAPL", "NVDA", "AMD", "TSLA"],
-            default=["SPY", "QQQ"])
-        risk_pct = st.slider("Risk per trade (%)", 0.1, 2.0, 0.5, 0.1)
-        max_loss = st.slider("Stop for the day at (%)", 0.5, 5.0, 2.0, 0.5)
-        max_age = st.slider("Refuse bars older than (min)", 2.0, 20.0, 6.0, 1.0,
-                            help="The free data feed is 15 minutes behind. "
-                                 "Raising this trades a stale price.")
-        st.caption("Practice account only. The code refuses a live one.")
-        st.divider()
-        instance = st.text_input(
-            "This instance", value=st.session_state.get("instance", ""),
-            placeholder="leave blank for the main one",
-            help="Name this copy if you run several. Each keeps its own state "
-                 "and decision log; they share the account, which is the only "
-                 "thing that knows what you really hold.")
-        st.session_state["instance"] = instance
-        st.caption(f"Version {current_version().label()}")
-
-    if not symbols:
-        st.info("Pick something to trade in the sidebar.")
-        st.stop()
 
     auto = AutoTrader(broker, AutoConfig(
         symbols=tuple(symbols), risk_frac=risk_pct / 100.0,
