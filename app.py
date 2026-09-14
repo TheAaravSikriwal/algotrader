@@ -1,17 +1,16 @@
-"""Landing page: pick how you want to trade today.
+"""Day trader — two tabs, and a picture of what is happening.
 
-Two ways in, and the difference between them is who chooses the rule:
+**Trade** is the whole job: Auto or Manual across the top, the session chart
+underneath, your position drawn on it. Auto runs the buy-and-sell loop itself
+and picks its own algorithm; Manual is the same workflow with you pressing the
+buttons. Both obey the same rails and record into the same log.
 
-  * **Trade** -- you pick a base algorithm, or you place the orders yourself
-    and the app just keeps the rails on.
-  * **Modular** -- the app names the best-evidenced rule for right now, from
-    the ones backtested in this app as actual day trades, and re-checks it as
-    the session moves.
+**Workshop** tests and adds algorithms. Not the daily path — it feeds the
+pool that Auto chooses from.
 
-Everything either mode can offer has been through the backtest lab under
-day-trading rules: flat by the close, confined to the trading window, costs
-charged both sides of every turn. Nothing reaches this page on daily-bar
-evidence, because "which rule right now" is not a question daily bars answer.
+Auto publishes what it is doing to `live/state.json` every cycle, and reads
+`live/instructions.json` before deciding anything. That is the seam Claude
+works through: watch the state, write an instruction, the loop picks it up.
 """
 from __future__ import annotations
 
@@ -19,147 +18,369 @@ import sys
 from datetime import datetime, time
 from pathlib import Path
 
+import pandas as pd
 import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from core import money
+from core.autotrader import AutoConfig, AutoTrader
+from core.broker import BrokerError
+from core.daytrade import DayTradeConfig
+from core.daytrader import DayTrader, DayTraderConfig, NotPaper
 from core.env import load_env
+from core.fills import FillLog, FillRecord
+from core.livecharts import candidate_bars, pnl_chart, session_chart
+from core.livestate import Bridge
 from core.marketclock import CalendarError, MarketCalendar
-from core.recommend import best_intraday, load_intraday, rank
-from core.ui import active_mode, inject_css, page_header, plain, tile
+from core.recommend import load_intraday, rank
+from core.ui import active_mode, inject_css
 from core.version import current as current_version
 
 load_env()
-
 st.set_page_config(page_title="Day trader", layout="wide", page_icon="📈")
-mode = active_mode()
-inject_css(mode)
+MODE = active_mode()
+inject_css(MODE)
 
-page_header("Day trader", "Pick how you want to trade today.")
+WINDOW = (time(10, 30), time(15, 30))
+REFRESH_SECONDS = 30
 
-# ------------------------------------------------------------- market state
-now = datetime.now()
-session = None
+st.markdown("""
+<style>
+  /* clamp() so the headline number shrinks rather than wrapping: "$4,999"
+     breaking into "$4,99 / 9" is worse than a smaller font. */
+  .big   { font-size: clamp(22px, 2.2vw, 36px); font-weight: 650;
+           line-height: 1.1; white-space: nowrap; }
+  .mid   { font-size: 22px; font-weight: 600; }
+  .lab   { font-size: 12px; opacity: .6; letter-spacing: .03em;
+           text-transform: uppercase; }
+  .sub   { font-size: 13px; opacity: .7; }
+  .pill  { display:inline-block; padding: 3px 10px; border-radius: 999px;
+           font-size: 12px; font-weight: 600; }
+  .on    { background: rgba(77,190,130,.18); color: #2e9c68; }
+  .off   { background: rgba(140,140,150,.18); color: #7b7b85; }
+  .warn  { background: rgba(230,160,60,.18);  color: #b97f22; }
+  .stop  { background: rgba(220,90,90,.18);   color: #c0504d; }
+</style>""", unsafe_allow_html=True)
+
+
+def pill(text: str, kind: str = "off") -> str:
+    return f'<span class="pill {kind}">{text}</span>'
+
+
+def stat(col, label: str, value: str, sub: str = "", tone: str = ""):
+    colour = {"good": "var(--good)", "bad": "var(--bad)"}.get(tone, "inherit")
+    col.markdown(
+        f'<div class="lab">{label}</div>'
+        f'<div class="big" style="color:{colour}">{value}</div>'
+        f'<div class="sub">{sub}</div>', unsafe_allow_html=True)
+
+
+# --------------------------------------------------------------- resources
+@st.cache_resource(show_spinner=False)
+def _broker():
+    from brokers.alpaca import AlpacaBroker
+    return AlpacaBroker(paper=True)
+
+
+@st.cache_resource(show_spinner=False)
+def _calendar():
+    return MarketCalendar.load()
+
+
+bridge = Bridge()
 try:
-    calendar = MarketCalendar.load()
+    calendar = _calendar()
+except CalendarError as exc:
+    st.error(f"No market calendar. {exc}")
+    if st.button("Download it"):
+        MarketCalendar.fetch("2020-01-01", "2027-12-31")
+        st.rerun()
+    st.stop()
+
+try:
+    broker = _broker()
+except Exception as exc:                                  # noqa: BLE001
+    st.error(f"Cannot reach the practice account: {exc}")
+    st.stop()
+
+now = datetime.now()
+try:
     session = calendar.session(now)
-    is_open = session.contains(now)
-    lo, hi = session.window(time(10, 30), time(15, 30))
+    market_open = session.contains(now)
+    lo, hi = session.window(*WINDOW)
     in_window = lo <= now < hi
-    when = f"{session.open:%H:%M}–{session.close:%H:%M} ET"
-    if session.is_half_day:
-        when += "  (short day)"
+    flat_at = session.flatten_deadline(5)
 except CalendarError:
-    calendar, is_open, in_window = None, False, False
-    when = "closed today"
+    session, market_open, in_window, flat_at = None, False, False, None
+
+trade_tab, shop_tab = st.tabs(["**Trade**", "Workshop"])
+
+# =========================================================== TRADE
+with trade_tab:
+    auto_on = st.session_state.get("auto_on", False)
+
+    head = st.columns([2, 3, 2, 2])
+    with head[0]:
+        st.markdown("### Day trader")
+        st.markdown(
+            pill("MARKET OPEN" if market_open else "MARKET CLOSED",
+                 "on" if market_open else "off")
+            + " " + pill("WINDOW OPEN" if in_window else "OUT OF WINDOW",
+                         "on" if in_window else "warn"),
+            unsafe_allow_html=True)
+        if flat_at:
+            st.markdown(f'<div class="sub">flat by {flat_at:%H:%M}</div>',
+                        unsafe_allow_html=True)
+
+    with head[1]:
+        how = st.radio("Mode", ["Auto", "Manual"], horizontal=True,
+                       label_visibility="collapsed",
+                       index=0 if auto_on else 1)
+
     try:
-        nxt = [s for s in MarketCalendar.load().sessions() if s.day > now.date()]
-        when = f"closed — next open {nxt[0].day:%A %d %b}" if nxt else "closed"
-    except CalendarError:
-        pass
+        account = broker.get_account()
+        positions = broker.get_positions()
+    except BrokerError as exc:
+        st.error(f"Broker unreachable: {exc}")
+        st.stop()
 
-pool = load_intraday()
-rec = best_intraday(candidates=pool)
+    held = next(iter(positions.values()), None)
+    with head[2]:
+        stat(st, "Account", f"${account.equity:,.0f}", "practice money")
+    with head[3]:
+        if held:
+            stat(st, "Open", f"{held.qty:g} {held.symbol}",
+                 f"{money.fmt(held.unrealized_pl)} unrealised",
+                 "good" if held.unrealized_pl >= 0 else "bad")
+        else:
+            stat(st, "Open", "flat", "nothing held")
 
-m = st.columns(4)
-tile(m[0], "Market", "Open" if is_open else "Closed", when,
-     "good" if is_open else "")
-tile(m[1], "Trading window", "Open" if in_window else "Shut",
-     "10:30–15:30, when the spread is narrowest",
-     "good" if in_window else "")
-tile(m[2], "Rules backtested", f"{len(pool)}",
-     "as day trades, costs included")
-usable = [c for c in pool if c.credible]
-tile(m[3], "With a usable sample", f"{len(usable)}",
-     f"at least 100 trades each", "good" if usable else "bad")
+    st.divider()
 
-st.divider()
+    # ------------------------------------------------------------ settings
+    with st.sidebar:
+        st.markdown("### Settings")
+        symbols = st.multiselect(
+            "Trade", ["SPY", "QQQ", "IWM", "AAPL", "NVDA", "AMD", "TSLA"],
+            default=["SPY", "QQQ"])
+        risk_pct = st.slider("Risk per trade (%)", 0.1, 2.0, 0.5, 0.1)
+        max_loss = st.slider("Stop for the day at (%)", 0.5, 5.0, 2.0, 0.5)
+        max_age = st.slider("Refuse bars older than (min)", 2.0, 20.0, 6.0, 1.0,
+                            help="The free data feed is 15 minutes behind. "
+                                 "Raising this trades a stale price.")
+        st.caption("Practice account only. The code refuses a live one.")
+        st.divider()
+        st.caption(f"Version {current_version().label()}")
 
-# ------------------------------------------------------------- the two modes
-left, right = st.columns(2)
+    if not symbols:
+        st.info("Pick something to trade in the sidebar.")
+        st.stop()
 
-with left:
-    st.markdown("### Trade")
-    plain("You choose. Run one base algorithm all session, or place the "
-          "orders yourself and let the app hold the rails — session window, "
-          "flatten deadline, daily loss limit, position caps.")
-    st.caption("Best when you have a view of your own, or you want to watch "
-               "one rule behave before trusting it.")
-    if st.button("Open Trade", type="primary", width="stretch"):
-        st.switch_page("pages/1_Trade.py")
+    auto = AutoTrader(broker, AutoConfig(
+        symbols=tuple(symbols), risk_frac=risk_pct / 100.0,
+        max_daily_loss_frac=max_loss / 100.0,
+        max_open_positions=len(symbols),
+        max_bar_age_minutes=max_age), calendar, bridge)
+    auto._running = st.session_state.get("running", "")
+    auto.cfg.paused = st.session_state.get("paused", False)
 
-with right:
-    st.markdown("### Modular")
-    plain("The app chooses. It names the best-evidenced rule for this moment "
-          "out of everything backtested here, re-checks it as the session "
-          "moves, and tells you when the honest answer is to stand aside.")
-    st.caption("It will refuse to name one when nothing has a real edge. "
-               "That refusal is the feature.")
-    if st.button("Open Modular", width="stretch"):
-        st.switch_page("pages/2_Modular.py")
+    # ============================================================= AUTO
+    if how == "Auto":
+        st.session_state["auto_on"] = True
+        c = st.columns([1, 1, 4])
+        if c[0].button("▶ Run one cycle", type="primary", width="stretch"):
+            cyc = auto.cycle(now=now, execute=True)
+            st.session_state["running"] = auto._running
+            st.session_state["paused"] = auto.cfg.paused
+            st.session_state["last_cycle"] = cyc
+        if c[1].button("■ Close all", width="stretch"):
+            auto.flatten() if hasattr(auto, "flatten") else auto._trader.flatten()
+            st.rerun()
 
-# --------------------------------------------------------- what it says now
-st.divider()
-st.markdown("### What the app would pick right now")
+        state = bridge.state()
+        age = bridge.state_age_seconds()
 
-if rec.action == "stand_aside":
-    st.error(f"**Stand aside.** {rec.reason}")
-elif rec.best:
-    box = st.info if rec.confident else st.warning
-    box(money.md(
-        f"**{rec.best.strategy} on {rec.best.symbol}** — "
-        f"{rec.best.expectancy_pct:+.2f} bps a trade after costs, which is "
-        f"{money.fmt(money.amount(rec.best.expectancy_pct / 100.0, 1_000))} "
-        f"on a $1,000 trade, on {rec.best.trades:.0f} trades "
-        f"(t={rec.best.t_stat:.2f})."
-        + ("" if rec.confident else
-           "  The margin is inside the noise — the best-evidenced guess, not "
-           "a proven edge.")))
+        s1 = st.columns(4)
+        running = state.get("running") or "nothing"
+        stat(s1[0], "Running", running,
+             state.get("chose_because", "")[:70] or "not chosen yet",
+             "good" if state.get("running") else "")
+        cand = state.get("candidate") or {}
+        if cand:
+            stat(s1[1], "Its edge", f"{cand.get('expectancy_bps', 0):+.2f} bps",
+                 money.md(money.brief(cand.get("expectancy_bps", 0) / 100.0,
+                                      "once")),
+                 "good" if cand.get("expectancy_bps", 0) > 0 else "bad")
+            stat(s1[2], "Confidence", f"t = {cand.get('t_stat', 0):+.2f}",
+                 f"{int(cand.get('trades', 0))} trades tested",
+                 "good" if abs(cand.get("t_stat", 0)) >= 1.96 else "bad")
+        stat(s1[3], "Last look",
+             f"{age:.0f}s ago" if age is not None else "never",
+             state.get("headline", ""), "" if (age or 0) < 120 else "bad")
 
-if pool:
-    with st.expander(f"Every rule backtested here ({len(pool)})"):
-        import pandas as pd
+        if state.get("blocks"):
+            st.warning("**Standing down:**  " + "  ·  ".join(state["blocks"]))
+        if state.get("instruction_applied"):
+            st.info(f"**Instruction applied:** {state['instruction_applied']}")
+
+        st.caption(
+            "Auto writes what it is doing to `live/state.json` each cycle and "
+            "reads `live/instructions.json` before deciding. That is how "
+            "Claude steps in — watch the state, leave an instruction, the "
+            "loop picks it up next cycle.")
+
+    # =========================================================== MANUAL
+    else:
+        st.session_state["auto_on"] = False
+        trader = DayTrader(broker, DayTraderConfig(
+            symbols=tuple(symbols),
+            rule=DayTradeConfig(symbols=tuple(symbols),
+                                risk_frac=risk_pct / 100.0),
+            max_daily_loss_frac=max_loss / 100.0,
+            max_open_positions=len(symbols),
+            max_bar_age_minutes=max_age), calendar)
+
+        blocks = trader.check_rails(account, session, now) if session else \
+            ["the market is closed"]
+        if blocks:
+            st.warning("**Rails blocking new positions:**  "
+                       + "  ·  ".join(blocks))
+
+        f = st.columns([1, 1, 1, 1, 1, 1])
+        sym = f[0].selectbox("Symbol", symbols)
+        side = f[1].selectbox("Side", ["buy", "sell"])
+        qty = f[2].number_input("Shares", 1, 10_000, 1)
+
+        ref = None
+        try:
+            recent = broker.get_bars(sym, "5Min", 3)
+            if len(recent):
+                ref = float(recent["close"].iloc[-1])
+        except BrokerError:
+            pass
+        base = float(round(ref or 100.0, 2))
+
+        limit_px = f[3].number_input("Limit", 0.01, value=base, step=0.01)
+        stop_px = f[4].number_input("Stop (0=none)", 0.0, value=0.0, step=0.01)
+        tgt_px = f[5].number_input("Target (0=none)", 0.0, value=0.0, step=0.01)
+
+        if ref:
+            st.caption(money.md(
+                f"{qty} share(s) ≈ {money.fmt(qty * ref)} of notional. "
+                f"1% against you is {money.fmt(qty * ref * 0.01)}."
+                + ("  No stop set — nothing will close this for you."
+                   if stop_px == 0 else "")))
+
+        go_col, close_col = st.columns([1, 1])
+        if go_col.button(f"{side.title()} {qty} {sym}", type="primary",
+                         disabled=bool(blocks), width="stretch"):
+            try:
+                order = broker.submit_order(
+                    sym, int(qty), side, order_type="limit",
+                    limit_price=round(limit_px, 2),
+                    stop_loss=round(stop_px, 2) if stop_px > 0 else None,
+                    take_profit=round(tgt_px, 2) if tgt_px > 0 else None)
+                trader.fills.record(FillRecord(
+                    symbol=sym, side=side, qty=float(qty),
+                    reference_price=float(ref or limit_px), order_type="limit",
+                    limit_price=float(limit_px),
+                    filled_qty=float(getattr(order, "filled_qty", 0) or 0),
+                    filled_price=getattr(order, "filled_price", None),
+                    status=getattr(order, "status", "submitted"),
+                    strategy="manual", order_id=getattr(order, "id", "")))
+                bridge.record("manual_order", symbol=sym, side=side, qty=int(qty),
+                              limit=round(limit_px, 2))
+                st.success(f"Sent — order {getattr(order, 'id', '')[:8]}")
+            except BrokerError as exc:
+                st.error(f"Rejected: {exc}")
+        if close_col.button("Close everything now", width="stretch"):
+            st.dataframe(pd.DataFrame(trader.flatten()), width="stretch",
+                         hide_index=True)
+
+    # -------------------------------------------------------- the picture
+    st.divider()
+    watch = held.symbol if held else symbols[0]
+    try:
+        bars = broker.get_bars(watch, "5Min", 120)
+        today = bars[bars.index.normalize() == pd.Timestamp(now.date())]
+    except BrokerError:
+        today = pd.DataFrame()
+
+    fills_all = FillLog(Path("logs") / "daytrade_fills.jsonl").frame()
+    fills_today = pd.DataFrame()
+    if not fills_all.empty and "ts" in fills_all:
+        ts = pd.to_datetime(fills_all["ts"], errors="coerce", utc=True)
+        fills_today = fills_all[ts >= pd.Timestamp.now(tz="UTC").normalize()]
+
+    left, right = st.columns([3, 1])
+    with left:
+        st.markdown(f"**{watch} today**")
+        st.plotly_chart(session_chart(
+            today, MODE,
+            entry=float(held.avg_price) if held else None,
+            window=WINDOW, fills=fills_today), width="stretch",
+            config={"displayModeBar": False})
+    with right:
+        st.markdown("**What happened**")
+        rows = bridge.decisions(limit=14)
+        if not rows:
+            st.caption("Nothing yet today.")
+        for r in reversed(rows):
+            when = str(r.get("ts", ""))[11:16]
+            line = r.get("headline") or r.get("result") or r.get("event")
+            st.markdown(
+                f'<div style="font-size:12px;padding:4px 0;'
+                f'border-bottom:1px solid rgba(128,128,128,.15)">'
+                f'<span style="opacity:.5">{when}</span> &nbsp;{line}</div>',
+                unsafe_allow_html=True)
+
+    traded_today = (not fills_today.empty
+                    and fills_today["filled_qty"].fillna(0).sum() > 0)
+    if traded_today:
+        st.markdown("**Cost paid today**")
+        st.plotly_chart(pnl_chart(fills_today, MODE), width="stretch",
+                        config={"displayModeBar": False})
+
+# ======================================================== WORKSHOP
+with shop_tab:
+    st.markdown("### Workshop")
+    st.caption("Everything Auto can choose from. Tested as day trades — flat "
+               "by the close, inside the window, costs charged both sides.")
+
+    pool = load_intraday()
+    usable = [c for c in pool if c.credible]
+    w = st.columns(4)
+    stat(w[0], "Rules tested", f"{len(pool)}", "rule-symbol pairs")
+    stat(w[1], "Usable sample", f"{len(usable)}", "100+ trades each",
+         "good" if usable else "bad")
+    positive = [c for c in usable if c.expectancy_pct > 0]
+    stat(w[2], "Positive", f"{len(positive)}", "after costs",
+         "good" if positive else "bad")
+    real = [c for c in positive if c.significant]
+    stat(w[3], "Statistically real", f"{len(real)}", "t above 2",
+         "good" if real else "bad")
+
+    if not real:
+        st.warning(
+            "**Nothing here is distinguishable from luck yet.** Auto will "
+            "still run the best-evidenced rule, and will tell you that is "
+            "what it is doing. It stands aside entirely when nothing is even "
+            "positive.")
+
+    st.plotly_chart(candidate_bars(pool, MODE), width="stretch",
+                    config={"displayModeBar": False})
+    st.caption("Green is usable and positive, grey usable and negative, "
+               "amber too few trades to judge however large the bar.")
+
+    with st.expander("The full table"):
         st.dataframe(pd.DataFrame([{
             "Rule": c.strategy, "Symbol": c.symbol,
             "Per trade": f"{c.expectancy_pct:+.2f} bps",
             "On $1,000": money.fmt(money.amount(c.expectancy_pct / 100.0, 1_000)),
             "t": f"{c.t_stat:+.2f}", "Trades": int(c.trades),
-            "Usable": "yes" if c.credible else "too few trades",
-        } for c in rank(pool)[:40]]), width="stretch", hide_index=True)
-        st.caption(
-            "Ranked on evidence, not on the biggest number: a large average "
-            "on a handful of trades does not outrank a small one on hundreds. "
-            "Two rules in this table show more than +65 bps on fewer than ten "
-            "trades, and neither is recommendable.")
+            "Verdict": "usable" if c.credible else "too few trades",
+        } for c in rank(pool)]), width="stretch", hide_index=True)
 
-st.divider()
-b1, b2 = st.columns(2)
-with b1:
-    st.markdown("**Backtest lab**")
-    plain("Build a rule and test it as a day trade. Anything that passes "
-          "through here becomes available to both modes above.")
-    if st.button("Open the lab", width="stretch"):
-        st.switch_page("pages/3_Backtest_lab.py")
-with b2:
-    st.markdown("**Research**")
-    plain("The longer-horizon tools: basket tests, event studies, news, and "
-          "the scoreboard of everything ever tried.")
-    if st.button("Open research", width="stretch"):
-        st.switch_page("pages/4_Research.py")
-
-st.caption(
-    "Nothing here places a real order. Both modes trade a practice account "
-    "with fake money and the code refuses a live one. Alpaca's free data is "
-    "15 minutes delayed, and the loop stands down rather than trading a stale "
-    "price — see research/PAPER_TRADING_LIMITS.md.")
-
-_v = current_version()
-if _v.stale:
-    st.warning(
-        f"**The code changed after this app started.** You are looking at "
-        f"pages from `{_v.commit}` but the modules behind them were loaded "
-        f"earlier. Close the window and reopen it — Streamlit caches imports, "
-        f"so a reload is not enough.")
-st.caption(f"Version {_v.label()}"
-           + (f" — {_v.subject}" if _v.subject else ""))
+    st.caption("To add or retest a rule: `python research/evaluate_intraday.py`, "
+               "or ask Claude. Results land here automatically.")
