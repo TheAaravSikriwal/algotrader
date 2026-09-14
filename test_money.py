@@ -213,3 +213,18 @@ def test_md_is_for_markdown_only_not_for_html_blocks():
     raw = brief(4.3, "once", 1_000)
     assert raw.startswith("$"), "HTML blocks take the unescaped form"
     assert md(raw).startswith("\$"), "markdown blocks take the escaped form"
+
+
+def test_unmd_recovers_a_string_that_went_to_the_wrong_place():
+    """The same money string is correct in markdown and wrong in HTML.
+
+    Three separate times in this project an escaped string reached an
+    unsafe_allow_html block and rendered as a literal "\$0.75". The HTML
+    helpers now strip it on the way in, so the call site does not have to
+    remember which variant it needs.
+    """
+    from core.money import md, unmd
+    plain = "$0.75 per $1,000"
+    assert md(plain) != plain
+    assert unmd(md(plain)) == plain
+    assert unmd(plain) == plain, "already-plain text passes through untouched"

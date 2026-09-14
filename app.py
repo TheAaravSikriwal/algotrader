@@ -14,6 +14,7 @@ works through: watch the state, write an instruction, the loop picks it up.
 """
 from __future__ import annotations
 
+import re
 import sys
 from datetime import datetime, time
 from pathlib import Path
@@ -69,7 +70,15 @@ def pill(text: str, kind: str = "off") -> str:
 
 
 def stat(col, label: str, value: str, sub: str = "", tone: str = ""):
+    """A big labelled number. Renders raw HTML, so it un-escapes money.
+
+    Whether a caller passes money.md(...) or the plain string stops mattering
+    here, which it should: the same helper output is correct in a markdown
+    block and wrong in this one, and that distinction is not worth asking
+    every call site to remember.
+    """
     colour = {"good": "var(--good)", "bad": "var(--bad)"}.get(tone, "inherit")
+    value, sub = money.unmd(value), money.unmd(sub)
     col.markdown(
         f'<div class="lab">{label}</div>'
         f'<div class="big" style="color:{colour}">{value}</div>'
@@ -203,8 +212,12 @@ with trade_tab:
 
         s1 = st.columns(4)
         running = state.get("running") or "nothing"
-        stat(s1[0], "Running", running,
-             state.get("chose_because", "")[:70] or "not chosen yet",
+        because = state.get("chose_because", "") or "not chosen yet"
+        if len(because) > 96:
+            # Cut at a word, not mid-word: "...best tested rule. Switchin"
+            # reads like the app broke rather than like a summary.
+            because = because[:96].rsplit(" ", 1)[0] + "..."
+        stat(s1[0], "Running", running, because,
              "good" if state.get("running") else "")
         cand = state.get("candidate") or {}
         if cand:
@@ -323,16 +336,35 @@ with trade_tab:
             config={"displayModeBar": False})
     with right:
         st.markdown("**What happened**")
-        rows = bridge.decisions(limit=14)
-        if not rows:
-            st.caption("Nothing yet today.")
-        for r in reversed(rows):
+        rows = bridge.decisions(limit=60)
+
+        # Collapse runs of the identical message. A loop that stands down for
+        # the same reason every cycle otherwise fills the whole feed with one
+        # sentence and buries the events that actually differ.
+        feed: list[tuple[str, str, int, str]] = []
+        for r in rows:
             when = str(r.get("ts", ""))[11:16]
-            line = r.get("headline") or r.get("result") or r.get("event")
+            line = str(r.get("headline") or r.get("result") or r.get("event"))
+            # Compare with the digits stripped out. "market data is 16
+            # minutes behind" and "...17 minutes behind" are the same event
+            # one minute apart, and treating them as different fills the feed
+            # with a counter ticking up.
+            shape = re.sub(r"\d+", "#", line)
+            if feed and feed[-1][3] == shape:
+                t0, _, n, sh = feed[-1]
+                feed[-1] = (t0, line, n + 1, sh)   # keep the newest wording
+            else:
+                feed.append((when, line, 1, shape))
+
+        if not feed:
+            st.caption("Nothing yet today.")
+        for when, line, n, _ in reversed(feed[-12:]):
+            times = (f'<span style="opacity:.45"> x{n}</span>' if n > 1 else "")
             st.markdown(
-                f'<div style="font-size:12px;padding:4px 0;'
+                f'<div style="font-size:12px;padding:5px 0;'
                 f'border-bottom:1px solid rgba(128,128,128,.15)">'
-                f'<span style="opacity:.5">{when}</span> &nbsp;{line}</div>',
+                f'<span style="opacity:.5">{when}</span> &nbsp;'
+                f'{line[:150]}{times}</div>',
                 unsafe_allow_html=True)
 
     traded_today = (not fills_today.empty

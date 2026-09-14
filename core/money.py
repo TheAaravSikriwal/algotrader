@@ -150,3 +150,16 @@ def md(text: str) -> str:
     module's output reached a markdown block.
     """
     return text.replace("$", "\\$")
+
+
+def unmd(text: str) -> str:
+    """Undo `md`, for a string that ended up in an HTML block instead.
+
+    `md` escapes dollars so Streamlit's markdown does not read them as LaTeX.
+    Inside `unsafe_allow_html` the backslash has no meaning and renders
+    literally as "\\$0.75". Three separate times in this project a money
+    string reached an HTML block still escaped, so the HTML helpers now strip
+    it on the way in rather than relying on every call site to pass the right
+    variant.
+    """
+    return str(text).replace("\\$", "$")
