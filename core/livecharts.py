@@ -23,6 +23,7 @@ def session_chart(bars: pd.DataFrame, mode: str = "light",
                   target: float | None = None, side: str = "buy",
                   window: tuple[time, time] | None = None,
                   fills: pd.DataFrame | None = None,
+                  cycles: list[dict] | None = None,
                   height: int = 420) -> go.Figure:
     """Today's price, with your position drawn on it."""
     t = tokens(mode)
@@ -89,9 +90,64 @@ def session_chart(bars: pd.DataFrame, mode: str = "light",
                 name=direction, showlegend=False,
                 hovertemplate=f"{direction} %{{y:.2f}}<extra></extra>"))
 
+    # Each cycle as a tick along the bottom, so a quiet chart still shows the
+    # loop was awake. Without these, "nothing happened" and "nothing ran" look
+    # identical, and they are very different problems.
+    if cycles:
+        low = float(bars["low"].min())
+        span = float(bars["high"].max()) - low
+        for c in cycles:
+            when = c.get("at")
+            if when is None:
+                continue
+            colour = {"order": t["good"], "flatten": t["critical"],
+                      "blocked": t["muted"]}.get(c.get("kind", ""), t["muted"])
+            fig.add_trace(go.Scatter(
+                x=[when], y=[low - span * 0.04], mode="markers",
+                marker=dict(symbol="line-ns-open", size=9, color=colour,
+                            line=dict(width=2, color=colour)),
+                showlegend=False, hoverinfo="text",
+                hovertext=f"{c.get('label', 'cycle')}"))
+
     apply_layout(fig, mode, "", height)
     fig.update_layout(xaxis_rangeslider_visible=False,
                       margin=dict(l=8, r=8, t=8, b=8))
+    return fig
+
+
+def cycle_strip(cycles: list[dict], mode: str = "light",
+                height: int = 96) -> go.Figure:
+    """Every cycle as a block on a timeline, newest on the right.
+
+    Answers "has it been running, and what did it decide each time" at a
+    glance. A list of identical log lines cannot: the eye reads a row of
+    grey blocks with two green ones as a shape, and reads twenty sentences
+    as a wall.
+    """
+    t = tokens(mode)
+    fig = go.Figure()
+    if not cycles:
+        apply_layout(fig, mode, "No cycles yet", height)
+        fig.update_layout(margin=dict(l=8, r=8, t=8, b=8))
+        return fig
+
+    palette = {"order": t["good"], "flatten": t["critical"],
+               "throttled": t["series_3"], "blocked": t["muted"],
+               "watching": t["series_2"]}
+    fig.add_trace(go.Bar(
+        x=list(range(len(cycles))),
+        y=[1] * len(cycles),
+        marker_color=[palette.get(c.get("kind", "blocked"), t["muted"])
+                      for c in cycles],
+        marker_line_width=0, width=0.82,
+        hovertext=[f"{c.get('time', '')}  {c.get('label', '')}"
+                   for c in cycles],
+        hoverinfo="text", showlegend=False))
+
+    apply_layout(fig, mode, "", height)
+    fig.update_layout(
+        margin=dict(l=8, r=8, t=4, b=4), bargap=0.18,
+        xaxis=dict(visible=False), yaxis=dict(visible=False, range=[0, 1.1]))
     return fig
 
 

@@ -232,3 +232,54 @@ def test_a_broker_failure_is_reported_not_raised(tmp_path):
     c = auto.cycle(now=datetime(2026, 9, 14, 10, 40))
     assert any("unreachable" in b for b in c.blocks)
     assert auto.bridge.state()["blocks"]
+
+
+# -- the throttle ---------------------------------------------------------
+
+def test_cycles_cannot_be_run_back_to_back(tmp_path):
+    """A second cycle inside one five-minute bar reaches the same conclusion.
+
+    Except when it reaches it again as a second order against the same
+    signal, which is how one setup quietly becomes two positions. Clicking
+    the button twice must not do that.
+    """
+    auto, broker = _auto(tmp_path)
+    auto.candidates = lambda: [_cand("X")]
+    t0 = datetime(2026, 9, 14, 10, 40)
+
+    first = auto.cycle(now=t0)
+    assert not first.throttled
+
+    again = auto.cycle(now=t0 + timedelta(seconds=5))
+    assert again.throttled
+    assert any("too soon" in b for b in again.blocks)
+    assert len(broker.submitted) <= 1, "the second click must not order again"
+
+
+def test_the_cooldown_expires(tmp_path):
+    auto, _ = _auto(tmp_path)
+    auto.candidates = lambda: [_cand("X")]
+    t0 = datetime(2026, 9, 14, 10, 40)
+    auto.cycle(now=t0)
+    assert auto.cycle(now=t0 + timedelta(seconds=45)).throttled is False
+
+
+def test_seconds_until_ready_counts_down(tmp_path):
+    auto, _ = _auto(tmp_path)
+    auto.candidates = lambda: [_cand("X")]
+    t0 = datetime(2026, 9, 14, 10, 40)
+    assert auto.seconds_until_ready(t0) == 0.0, "nothing has run yet"
+    auto.cycle(now=t0)
+    assert auto.seconds_until_ready(t0 + timedelta(seconds=10)) == pytest.approx(20.0)
+    assert auto.seconds_until_ready(t0 + timedelta(seconds=60)) == 0.0
+
+
+def test_a_throttled_cycle_does_not_publish_over_the_real_state(tmp_path):
+    """The dashboard must not show 'too soon' as if it were the loop's view."""
+    auto, _ = _auto(tmp_path)
+    auto.candidates = lambda: [_cand("X")]
+    t0 = datetime(2026, 9, 14, 10, 40)
+    auto.cycle(now=t0)
+    before = auto.bridge.state()
+    auto.cycle(now=t0 + timedelta(seconds=2))
+    assert auto.bridge.state()["headline"] == before["headline"]

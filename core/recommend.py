@@ -37,6 +37,7 @@ from core.algobook import LONG_TERM_BARS, measured_horizons
 RESULTS = Path(__file__).resolve().parent.parent / "research" / "results"
 EVAL = RESULTS / "evaluate_all.csv"
 INTRADAY = RESULTS / "evaluate_intraday.csv"
+INTRADAY_IEX = RESULTS / "evaluate_intraday_iex.csv"
 
 #: A challenger must beat the incumbent's expectancy by this multiple before
 #: switching is worth the spread it costs to switch.
@@ -243,7 +244,8 @@ def review(running: str, horizon: str = "short", symbol: str | None = None,
                    "better guess rather than a better rule.")))
 
 def load_intraday(symbol: str | None = None,
-                  path: Path | None = None) -> list[Candidate]:
+                  path: Path | None = None,
+                  feed: str = "iex") -> list[Candidate]:
     """Candidates measured as actual day trades, from evaluate_intraday.py.
 
     This is the pool the modular mode draws on. The daily-bar evaluation
@@ -253,7 +255,16 @@ def load_intraday(symbol: str | None = None,
     Rows pooled across symbols ("ALL") are dropped -- a recommendation names
     something you can actually trade.
     """
-    path = Path(path or INTRADAY)
+    # Default to IEX, because IEX is the feed you can actually trade on in
+    # real time -- the free SIP tape is fifteen minutes behind. Recommending
+    # from SIP results would name a rule measured on data you cannot act on,
+    # and the two disagree: RSI mean reversion is the best rule on SIP and a
+    # loser on IEX.
+    if path is None:
+        path = INTRADAY_IEX if str(feed).lower() == "iex" else INTRADAY
+        if not path.exists():
+            path = INTRADAY if path is INTRADAY_IEX else INTRADAY_IEX
+    path = Path(path)
     if not path.exists():
         return []
     try:

@@ -96,7 +96,19 @@ def _from_yfinance(symbol: str, start: str, end: str, timeframe: str) -> pd.Data
     return _normalise(raw)
 
 
-def _from_alpaca(symbol: str, start: str, end: str, timeframe: str) -> pd.DataFrame:
+def _from_alpaca(symbol: str, start: str, end: str, timeframe: str,
+                 feed: str = "sip") -> pd.DataFrame:
+    """Bars from Alpaca. `feed` is "sip" or "iex", and the choice matters.
+
+    SIP is the consolidated tape -- every US exchange, ~100% of volume -- but
+    the free plan delays it by fifteen minutes. IEX is one exchange, real-time
+    and free, carrying roughly 4% of the volume.
+
+    That is not a latency trade-off, it is a different series. Bar highs and
+    lows on 4% of the volume are not the market's highs and lows, so a rule
+    defined by them is a different rule. Backtest on whichever feed you intend
+    to trade on, and do not mix them.
+    """
     key = os.getenv("ALPACA_API_KEY_ID")
     secret = os.getenv("ALPACA_API_SECRET_KEY")
     if not key or not secret:
@@ -119,12 +131,15 @@ def _from_alpaca(symbol: str, start: str, end: str, timeframe: str) -> pd.DataFr
         "1Min": TimeFrame.Minute,
     }[timeframe]
 
+    from alpaca.data.enums import DataFeed
+
     client = StockHistoricalDataClient(key, secret)
     bars = client.get_stock_bars(StockBarsRequest(
         symbol_or_symbols=symbol.upper(),
         timeframe=tf,
         start=pd.Timestamp(start).to_pydatetime(),
         end=pd.Timestamp(end).to_pydatetime(),
+        feed=DataFeed.IEX if str(feed).lower() == "iex" else DataFeed.SIP,
     ))
     df = bars.df
     if df is None or df.empty:
@@ -135,19 +150,28 @@ def _from_alpaca(symbol: str, start: str, end: str, timeframe: str) -> pd.DataFr
 
 
 def load_bars(symbol: str, start, end, timeframe: str = "1Day",
-              source: str = "yfinance", use_cache: bool = True) -> pd.DataFrame:
-    """Fetch bars, transparently caching them on disk as CSV."""
+              source: str = "yfinance", use_cache: bool = True,
+              feed: str = "sip") -> pd.DataFrame:
+    """Fetch bars, transparently caching them on disk as CSV.
+
+    `feed` applies to the alpaca source only. It is part of the cache key,
+    because IEX and SIP bars for the same symbol and window are different
+    data and must never be served for one another.
+    """
     start = str(start)[:10]
     end = str(end)[:10]
-    path = _cache_path(symbol, start, end, timeframe, source)
+    tag = source if source != "alpaca" else f"alpaca-{str(feed).lower()}"
+    path = _cache_path(symbol, start, end, timeframe, tag)
 
     if use_cache and path.exists():
         cached = pd.read_csv(path, index_col=0, parse_dates=True)
         if not cached.empty:
             return _normalise(cached)
 
-    fetch = _from_alpaca if source == "alpaca" else _from_yfinance
-    df = fetch(symbol, start, end, timeframe)
+    if source == "alpaca":
+        df = _from_alpaca(symbol, start, end, timeframe, feed)
+    else:
+        df = _from_yfinance(symbol, start, end, timeframe)
     if use_cache:
         df.to_csv(path)
     return df

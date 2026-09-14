@@ -45,6 +45,7 @@ load_env()
 OUT = REPO / "research" / "results"
 OUT.mkdir(parents=True, exist_ok=True)
 RESULT = OUT / "evaluate_intraday.csv"
+RESULT_IEX = OUT / "evaluate_intraday_iex.csv"
 
 UNIVERSE = ["SPY", "QQQ", "IWM", "AAPL", "NVDA", "AMD", "TSLA", "MSFT"]
 QUICK = ["SPY", "QQQ"]
@@ -57,7 +58,8 @@ FALLBACK_SPREAD = 4.0
 MIN_TRADES = 100
 
 
-def load(symbol: str, months: int, timeframe: str) -> pd.DataFrame:
+def load(symbol: str, months: int, timeframe: str,
+         feed: str = "sip") -> pd.DataFrame:
     end = date.today()
     start = end - timedelta(days=31 * months)
     frames = []
@@ -66,7 +68,8 @@ def load(symbol: str, months: int, timeframe: str) -> pd.DataFrame:
     while cursor < end:
         stop = min(date(cursor.year + 1, 1, 1), end)
         try:
-            frames.append(load_bars(symbol, cursor, stop, timeframe, "alpaca"))
+            frames.append(load_bars(symbol, cursor, stop, timeframe,
+                                    "alpaca", feed=feed))
         except (DataError, Exception):
             pass
         cursor = stop
@@ -81,20 +84,31 @@ def main():
     ap.add_argument("--quick", action="store_true")
     ap.add_argument("--months", type=int, default=18)
     ap.add_argument("--timeframe", default="5Min")
+    ap.add_argument("--feed", default="sip", choices=["sip", "iex"],
+                    help="iex is real-time and free but carries ~4%% of "
+                         "the volume; sip is the full tape, delayed 15 "
+                         "minutes on the free plan. Backtest on the one "
+                         "you intend to trade.")
     args = ap.parse_args()
 
     symbols = QUICK if args.quick else UNIVERSE
     months = 6 if args.quick else args.months
+    # IEX results go to their own file. Mixing feeds in one pool would let a
+    # rule measured on 4% of the volume be recommended for trading against
+    # the full tape, or the reverse.
+    global RESULT
+    if args.feed == "iex":
+        RESULT = RESULT_IEX
     calendar = MarketCalendar.load()
 
     print(f"Universe: {', '.join(symbols)}   {months} months of "
-          f"{args.timeframe} bars")
+          f"{args.timeframe} bars on the {args.feed.upper()} feed")
     print("Costs are the measured mid-day spread per symbol, charged both "
           "sides.\n")
 
     bars = {}
     for s in symbols:
-        df = load(s, months, args.timeframe)
+        df = load(s, months, args.timeframe, args.feed)
         if len(df) > 500:
             bars[s] = df
             print(f"  {s:<6} {len(df):>7,} session bars  "

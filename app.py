@@ -31,7 +31,8 @@ from core.daytrade import DayTradeConfig
 from core.daytrader import DayTrader, DayTraderConfig, NotPaper
 from core.env import load_env
 from core.fills import FillLog, FillRecord
-from core.livecharts import candidate_bars, pnl_chart, session_chart
+from core.livecharts import (candidate_bars, cycle_strip, pnl_chart,
+                             session_chart)
 from core.livestate import Bridge
 from core.marketclock import CalendarError, MarketCalendar
 from core.recommend import load_intraday, rank
@@ -63,6 +64,20 @@ st.markdown("""
   .warn  { background: rgba(230,160,60,.18);  color: #b97f22; }
   .stop  { background: rgba(220,90,90,.18);   color: #c0504d; }
 </style>""", unsafe_allow_html=True)
+
+
+def cycle_kind(row: dict) -> str:
+    """One word for what a cycle did, for colouring the strip and the ticks."""
+    head = str(row.get("headline") or row.get("result") or "").lower()
+    if "placed" in head or row.get("event") == "orders":
+        return "order"
+    if "closed" in head or row.get("event") == "flatten":
+        return "flatten"
+    if "too soon" in head:
+        return "throttled"
+    if "watching" in head:
+        return "watching"
+    return "blocked"
 
 
 def pill(text: str, kind: str = "off") -> str:
@@ -197,15 +212,32 @@ with trade_tab:
     # ============================================================= AUTO
     if how == "Auto":
         st.session_state["auto_on"] = True
+        # The throttle lives on the AutoTrader, but that object is rebuilt on
+        # every Streamlit rerun, so the last-cycle time is kept in session
+        # state and handed back. Without this the cooldown resets on every
+        # click and does nothing at all.
+        auto._last_cycle_at = st.session_state.get("last_cycle_at")
+        wait = auto.seconds_until_ready(now)
+
         c = st.columns([1, 1, 4])
-        if c[0].button("▶ Run one cycle", type="primary", width="stretch"):
+        label = ("▶ Run one cycle" if wait <= 0
+                 else f"▶ Ready in {wait:.0f}s")
+        if c[0].button(label, type="primary", width="stretch",
+                       disabled=wait > 0):
             cyc = auto.cycle(now=now, execute=True)
+            if not cyc.throttled:
+                st.session_state["last_cycle_at"] = auto._last_cycle_at
             st.session_state["running"] = auto._running
             st.session_state["paused"] = auto.cfg.paused
-            st.session_state["last_cycle"] = cyc
-        if c[1].button("■ Close all", width="stretch"):
-            auto.flatten() if hasattr(auto, "flatten") else auto._trader.flatten()
             st.rerun()
+        if c[1].button("■ Close all", width="stretch"):
+            auto._trader.flatten()
+            st.rerun()
+        if wait > 0:
+            st.caption(
+                f"Waiting {wait:.0f}s. The rule reads five-minute bars, so "
+                f"running it again inside one bar cannot find anything new — "
+                f"but it can place a second order against the same signal.")
 
         state = bridge.state()
         age = bridge.state_age_seconds()
@@ -312,6 +344,47 @@ with trade_tab:
                          hide_index=True)
 
     # -------------------------------------------------------- the picture
+    # ------------------------------------------------- the cycle timeline
+    st.divider()
+    raw = bridge.decisions(limit=120)
+    cycle_rows = [r for r in raw
+                  if r.get("event") in {"cycle", "orders", "flatten"}]
+    cycles = [{"kind": cycle_kind(r),
+               "time": str(r.get("ts", ""))[11:16],
+               "label": str(r.get("headline") or r.get("result") or "")[:90],
+               "at": pd.to_datetime(r.get("ts"), errors="coerce", utc=True)}
+              for r in cycle_rows]
+    for c in cycles:
+        if pd.notna(c["at"]):
+            c["at"] = c["at"].tz_convert("America/New_York").tz_localize(None)
+        else:
+            c["at"] = None
+
+    if cycles:
+        st.markdown("**Every cycle today**")
+        st.plotly_chart(cycle_strip(cycles[-60:], MODE), width="stretch",
+                        config={"displayModeBar": False})
+
+        counts: dict[str, int] = {}
+        for c in cycles:
+            counts[c["kind"]] = counts.get(c["kind"], 0) + 1
+        ordered = [k for k in ("order", "flatten", "watching", "blocked",
+                               "throttled") if k in counts]
+        words = {"order": "placed an order", "flatten": "closed out",
+                 "watching": "watched, no setup",
+                 "blocked": "stood down", "throttled": "was told to wait"}
+        summary = ", ".join(f"**{counts[k]}** {words[k]}" for k in ordered)
+        last = cycles[-1]
+        st.markdown(
+            f"{len(cycles)} cycles so far — {summary}. "
+            f"The most recent, at **{last['time']}**, {last['label'].lower()}. "
+            f"Each tick under the price chart is one cycle, so a flat chart "
+            f"still shows the loop was awake.")
+    else:
+        st.caption("No cycles run yet today. Press **Run one cycle** above — "
+                   "each run reads the market once and decides, and every "
+                   "decision appears here.")
+
     st.divider()
     watch = held.symbol if held else symbols[0]
     try:
@@ -332,7 +405,8 @@ with trade_tab:
         st.plotly_chart(session_chart(
             today, MODE,
             entry=float(held.avg_price) if held else None,
-            window=WINDOW, fills=fills_today), width="stretch",
+            window=WINDOW, fills=fills_today, cycles=cycles),
+            width="stretch",
             config={"displayModeBar": False})
     with right:
         st.markdown("**What happened**")

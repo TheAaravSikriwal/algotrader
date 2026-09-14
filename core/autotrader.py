@@ -46,6 +46,11 @@ class AutoConfig:
     max_bar_age_minutes: float = 6.0
     #: Re-check which algorithm to run this often. Every cycle would churn.
     review_every_minutes: float = 15.0
+    #: Shortest gap between cycles. The rule works on five-minute bars, so
+    #: running it twice inside one bar can only produce the same answer --
+    #: except when it produces a second order against the same signal, which
+    #: is how one setup becomes two positions.
+    min_seconds_between_cycles: float = 30.0
     paused: bool = False
 
 
@@ -64,6 +69,7 @@ class Cycle:
     equity: float = 0.0
     positions: dict = field(default_factory=dict)
     candidate: dict = field(default_factory=dict)
+    throttled: bool = False
 
     @property
     def acted(self) -> bool:
@@ -92,6 +98,7 @@ class AutoTrader:
         self.calendar = calendar or MarketCalendar.load()
         self.bridge = bridge or Bridge()
         self._last_review: datetime | None = None
+        self._last_cycle_at: datetime | None = None
         self._running: str = ""
         self._trader = self._build_trader()
 
@@ -169,9 +176,31 @@ class AutoTrader:
 
     # -- one pass ---------------------------------------------------------
 
+    def seconds_until_ready(self, now: datetime | None = None) -> float:
+        """How long before another cycle is allowed. Zero means now.
+
+        The rule reads five-minute bars, so a second cycle inside one bar can
+        only reach the same conclusion -- except when it reaches it again as a
+        second order against the same signal, which is how one setup quietly
+        becomes two positions.
+        """
+        if self._last_cycle_at is None:
+            return 0.0
+        waited = ((now or datetime.now()) - self._last_cycle_at).total_seconds()
+        return max(self.cfg.min_seconds_between_cycles - waited, 0.0)
+
     def cycle(self, now: datetime | None = None,
               execute: bool = True) -> Cycle:
         now = now or datetime.now()
+
+        wait = self.seconds_until_ready(now)
+        if wait > 0:
+            c = Cycle(at=now, running=self._running)
+            c.blocks = [f"too soon — another cycle in {wait:.0f}s"]
+            c.throttled = True
+            return c
+
+        self._last_cycle_at = now
         c = Cycle(at=now)
 
         ins = self.bridge.pending()
