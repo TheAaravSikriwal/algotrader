@@ -34,7 +34,9 @@ import pandas as pd
 
 from core.algobook import LONG_TERM_BARS, measured_horizons
 
-EVAL = Path(__file__).resolve().parent.parent / "research" / "results" / "evaluate_all.csv"
+RESULTS = Path(__file__).resolve().parent.parent / "research" / "results"
+EVAL = RESULTS / "evaluate_all.csv"
+INTRADAY = RESULTS / "evaluate_intraday.csv"
 
 #: A challenger must beat the incumbent's expectancy by this multiple before
 #: switching is worth the spread it costs to switch.
@@ -239,3 +241,98 @@ def review(running: str, horizon: str = "short", symbol: str | None = None,
                 + ("" if best.significant else
                    "  Neither clears the significance bar, so this is the "
                    "better guess rather than a better rule.")))
+
+def load_intraday(symbol: str | None = None,
+                  path: Path | None = None) -> list[Candidate]:
+    """Candidates measured as actual day trades, from evaluate_intraday.py.
+
+    This is the pool the modular mode draws on. The daily-bar evaluation
+    cannot serve it: recommending a rule "for right now" on evidence gathered
+    from months-long holding periods answers a different question.
+
+    Rows pooled across symbols ("ALL") are dropped -- a recommendation names
+    something you can actually trade.
+    """
+    path = Path(path or INTRADAY)
+    if not path.exists():
+        return []
+    try:
+        df = pd.read_csv(path)
+    except Exception:
+        return []
+
+    needed = {"strategy", "symbol", "expectancy_bps", "t_stat", "trades"}
+    if not needed <= set(df.columns):
+        return []
+
+    df = df[df["symbol"].astype(str).str.upper() != "ALL"].copy()
+    if symbol:
+        df = df[df["symbol"].astype(str).str.upper() == symbol.upper()]
+
+    out = []
+    for _, r in df.iterrows():
+        out.append(Candidate(
+            strategy=str(r["strategy"]),
+            symbol=str(r["symbol"]),
+            # Per trade, in basis points -- the unit a day trader decides in.
+            expectancy_pct=float(r["expectancy_bps"]),
+            t_stat=float(r["t_stat"]) if pd.notna(r["t_stat"]) else 0.0,
+            trades=float(r["trades"]),
+            exposure=float(r.get("trades_per_session", 0.0) or 0.0),
+            avg_hold_bars=float(r.get("avg_bars_held", 0.0) or 0.0),
+            horizon="short",
+            sharpe_gap=0.0,
+            note=(f"{float(r.get('win_rate', 0)):.0%} win, "
+                  f"{float(r.get('gross_bps', 0)):.2f} bps before "
+                  f"{float(r.get('cost_bps', 0)):.2f} bps of cost"),
+        ))
+    return out
+
+
+def best_intraday(symbol: str | None = None,
+                  candidates: list[Candidate] | None = None) -> Recommendation:
+    """The best day-trading rule to run right now, or an honest refusal.
+
+    Units here are basis points per trade rather than percent per year, so
+    the wording differs, but the three rules are unchanged: it may return
+    nothing, evidence outranks return, and it never claims significance it
+    does not have.
+    """
+    pool = candidates if candidates is not None else load_intraday(symbol)
+    if not pool:
+        return Recommendation(
+            action="stand_aside",
+            reason=("No intraday evaluation on record. Run "
+                    "research/evaluate_intraday.py -- the daily-bar results "
+                    "cannot answer an intraday question."))
+
+    ordered = rank(pool)
+    winners = [c for c in ordered if c.credible]
+    if not winners:
+        top = ordered[0]
+        thin = [c for c in ordered if c.expectancy_pct > 0 and not c.credible]
+        extra = ""
+        if thin:
+            best_thin = max(thin, key=lambda c: c.expectancy_pct)
+            extra = (f"  {best_thin.strategy} shows "
+                     f"{best_thin.expectancy_pct:+.1f} bps but on only "
+                     f"{best_thin.trades:.0f} trades, which is an anecdote "
+                     f"rather than an edge.")
+        return Recommendation(
+            action="stand_aside",
+            reason=(f"No day-trading rule on record has positive expectancy "
+                    f"after costs on enough trades. The best with a usable "
+                    f"sample is {top.strategy} at {top.expectancy_pct:+.2f} "
+                    f"bps a trade." + extra),
+            alternatives=ordered[:6])
+
+    best = winners[0]
+    return Recommendation(
+        action="switch", best=best, alternatives=winners[1:6],
+        confident=best.significant,
+        reason=(f"{best.strategy} on {best.symbol}: "
+                f"{best.expectancy_pct:+.2f} bps a trade after costs, on "
+                f"{best.trades:.0f} trades (t={best.t_stat:.2f})."
+                + ("" if best.significant else
+                   "  Inside the noise -- the best-evidenced guess, not a "
+                   "proven edge.")))

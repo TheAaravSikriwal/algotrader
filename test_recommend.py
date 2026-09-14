@@ -9,6 +9,9 @@ from __future__ import annotations
 
 import pytest
 
+import pandas as pd
+from pathlib import Path
+
 from core.recommend import (
     MIN_TRADES,
     SWITCH_MARGIN,
@@ -161,3 +164,68 @@ def test_against_the_real_evaluation_the_answer_is_stand_aside():
         pytest.skip("evaluate_all.py has not been run")
     rec = best_for(horizon="short", candidates=short)
     assert rec.action == "stand_aside" or not rec.confident
+
+
+# -- the intraday pool, which the modular mode draws on -------------------
+
+def _i(strategy, bps, t=3.0, trades=500.0, symbol="SPY"):
+    return Candidate(strategy=strategy, symbol=symbol, expectancy_pct=bps,
+                     t_stat=t, trades=trades, exposure=1.0,
+                     avg_hold_bars=6.0, horizon="short")
+
+
+def test_a_huge_average_on_a_handful_of_trades_is_not_recommended():
+    """The exact shape the real data threw up.
+
+    Pooled across symbols, VWAP reversion showed +68.56 bps a trade -- on two
+    trades. Surfacing that as "the best algorithm right now" would be the
+    single most expensive thing this app could do.
+    """
+    from core.recommend import best_intraday
+    rec = best_intraday(candidates=[_i("Two trades", +68.56, t=0.70, trades=2),
+                                    _i("Seven trades", +67.23, t=0.96, trades=7)])
+    assert rec.action == "stand_aside"
+    assert "anecdote" in rec.reason
+    assert rec.best is None
+
+
+def test_the_thin_result_is_still_named_so_it_is_not_hidden():
+    """Refusing to recommend it is not the same as pretending it is not there."""
+    from core.recommend import best_intraday
+    rec = best_intraday(candidates=[_i("Two trades", +68.56, trades=2)])
+    assert "Two trades" in rec.reason
+    assert "2 trades" in rec.reason
+
+
+def test_a_credible_intraday_winner_is_named_with_its_confidence():
+    from core.recommend import best_intraday
+    rec = best_intraday(candidates=[_i("Solid", +14.0, t=1.10, trades=101)])
+    assert rec.action == "switch"
+    assert rec.confident is False
+    assert "Inside the noise" in rec.reason
+    assert "bps a trade" in rec.reason
+
+
+def test_an_all_symbols_row_is_never_recommended(tmp_path):
+    """A recommendation has to name something you can actually trade."""
+    from core.recommend import load_intraday
+    path = tmp_path / "intraday.csv"
+    pd.DataFrame([
+        {"strategy": "X", "symbol": "ALL", "expectancy_bps": 50.0,
+         "t_stat": 4.0, "trades": 900},
+        {"strategy": "X", "symbol": "SPY", "expectancy_bps": 2.0,
+         "t_stat": 1.0, "trades": 900},
+    ]).to_csv(path, index=False)
+    pool = load_intraday(path=path)
+    assert [c.symbol for c in pool] == ["SPY"]
+
+
+def test_no_intraday_file_says_so_rather_than_falling_back_to_daily():
+    """Falling back would answer an intraday question with daily evidence."""
+    from core.recommend import best_intraday, load_intraday
+    import tempfile
+    missing = Path(tempfile.gettempdir()) / "definitely_not_here.csv"
+    assert load_intraday(path=missing) == []
+    rec = best_intraday(candidates=[])
+    assert rec.action == "stand_aside"
+    assert "cannot answer an intraday question" in rec.reason

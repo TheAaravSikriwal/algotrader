@@ -1,21 +1,22 @@
-"""Landing page: pick a quadrant, see what you hold there.
+"""Landing page: pick how you want to trade today.
 
-Four quadrants, split on horizon and on whether the rule is reviewed as
-conditions change:
+Two ways in, and the difference between them is who chooses the rule:
 
-                    | fixed rule   | everchanging
-    ----------------|--------------|--------------
-    short term      | Short term   | Short term, live
-    long term       | Long term    | Long term, live
+  * **Trade** -- you pick a base algorithm, or you place the orders yourself
+    and the app just keeps the rails on.
+  * **Modular** -- the app names the best-evidenced rule for right now, from
+    the ones backtested in this app as actual day trades, and re-checks it as
+    the session moves.
 
-Each tile shows the holistic gain or loss of the algorithms filed under it.
-That number is *backtested*, and the page says so on every tile, because a
-landing page full of green percentages that were never traded is precisely
-how someone talks themselves into funding a losing rule.
+Everything either mode can offer has been through the backtest lab under
+day-trading rules: flat by the close, confined to the trading window, costs
+charged both sides of every turn. Nothing reaches this page on daily-bar
+evidence, because "which rule right now" is not a question daily bars answer.
 """
 from __future__ import annotations
 
 import sys
+from datetime import datetime, time
 from pathlib import Path
 
 import streamlit as st
@@ -23,118 +24,131 @@ import streamlit as st
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from core import money
-from core.algobook import (
-    LONG_LIVE,
-    LONG_TERM,
-    QUADRANTS,
-    SHORT_LIVE,
-    SHORT_TERM,
-    AlgoBook,
-    quadrant_totals,
-)
 from core.env import load_env
-from core.ui import active_mode, inject_css, page_header, plain
+from core.marketclock import CalendarError, MarketCalendar
+from core.recommend import best_intraday, load_intraday, rank
+from core.ui import active_mode, inject_css, page_header, plain, tile
 
 load_env()
 
-st.set_page_config(page_title="Trading workbench", layout="wide",
-                   page_icon="📈")
+st.set_page_config(page_title="Day trader", layout="wide", page_icon="📈")
 mode = active_mode()
 inject_css(mode)
 
-page_header(
-    "Trading workbench",
-    "Pick the kind of algorithm you want to look at.")
+page_header("Day trader", "Pick how you want to trade today.")
 
-book = AlgoBook()
-totals = quadrant_totals(book)
+# ------------------------------------------------------------- market state
+now = datetime.now()
+session = None
+try:
+    calendar = MarketCalendar.load()
+    session = calendar.session(now)
+    is_open = session.contains(now)
+    lo, hi = session.window(time(10, 30), time(15, 30))
+    in_window = lo <= now < hi
+    when = f"{session.open:%H:%M}–{session.close:%H:%M} ET"
+    if session.is_half_day:
+        when += "  (short day)"
+except CalendarError:
+    calendar, is_open, in_window = None, False, False
+    when = "closed today"
+    try:
+        nxt = [s for s in MarketCalendar.load().sessions() if s.day > now.date()]
+        when = f"closed — next open {nxt[0].day:%A %d %b}" if nxt else "closed"
+    except CalendarError:
+        pass
 
-ORDER = [SHORT_TERM, SHORT_LIVE, LONG_TERM, LONG_LIVE]
+pool = load_intraday()
+rec = best_intraday(candidates=pool)
 
-
-def render(container, key: str):
-    q = QUADRANTS[key]
-    t = totals[key]
-    with container:
-        st.markdown(
-            f'<div style="font-size:19px;font-weight:600;margin-bottom:2px">'
-            f'{q.title}</div>'
-            f'<div style="opacity:.65;font-size:13px;margin-bottom:10px">'
-            f'{q.blurb}</div>', unsafe_allow_html=True)
-
-        if t["tested"]:
-            ret = t["total_return_pct"]
-            vs = t["vs_hold_pct"]
-            tone = "var(--good)" if ret > 0 else "var(--bad)"
-            st.markdown(
-                f'<div style="font-size:30px;font-weight:600;color:{tone}">'
-                f'{ret:+.1f}%</div>'
-                f'<div style="opacity:.7;font-size:13px">'
-                f'{money.brief(ret, "once")} &middot; '
-                f'{vs:+.1f}% vs holding</div>'
-                f'<div style="opacity:.5;font-size:12px;margin-top:4px">'
-                f'{t["tested"]} of {t["algos"]} tested &middot; '
-                f'{t["beat_hold"]} beat buy-and-hold</div>',
-                unsafe_allow_html=True)
-        elif t["algos"]:
-            st.markdown(
-                f'<div style="font-size:30px;font-weight:600;opacity:.4">—</div>'
-                f'<div style="opacity:.6;font-size:13px">'
-                f'{t["algos"]} saved, none backtested yet</div>',
-                unsafe_allow_html=True)
-        else:
-            st.markdown(
-                '<div style="font-size:30px;font-weight:600;opacity:.3">—</div>'
-                '<div style="opacity:.6;font-size:13px">nothing here yet</div>',
-                unsafe_allow_html=True)
-
-        st.caption(q.detail)
-        if st.button(f"Open {q.title}", key=f"open_{key}",
-                     width="stretch"):
-            st.session_state["quadrant"] = key
-            st.switch_page("pages/1_My_algorithms.py")
-
-
-row1 = st.columns(2)
-row2 = st.columns(2)
-render(row1[0], SHORT_TERM)
-render(row1[1], SHORT_LIVE)
-render(row2[0], LONG_TERM)
-render(row2[1], LONG_LIVE)
+m = st.columns(4)
+tile(m[0], "Market", "Open" if is_open else "Closed", when,
+     "good" if is_open else "")
+tile(m[1], "Trading window", "Open" if in_window else "Shut",
+     "10:30–15:30, when the spread is narrowest",
+     "good" if in_window else "")
+tile(m[2], "Rules backtested", f"{len(pool)}",
+     "as day trades, costs included")
+usable = [c for c in pool if c.credible]
+tile(m[3], "With a usable sample", f"{len(usable)}",
+     f"at least 100 trades each", "good" if usable else "bad")
 
 st.divider()
 
-total_algos = sum(t["algos"] for t in totals.values())
-if not total_algos:
-    st.info(
-        "**No algorithms saved yet.** Go to the Workshop, pick a rule, and it "
-        "gets backtested the moment you save it. Everything you save shows up "
-        "in one of the four quadrants above.")
-    if st.button("Open the Workshop", type="primary"):
-        st.switch_page("pages/2_Workshop.py")
+# ------------------------------------------------------------- the two modes
+left, right = st.columns(2)
 
-c1, c2, c3 = st.columns(3)
-with c1:
-    st.markdown("**Workshop**")
-    plain("Add an algorithm. It is backtested automatically, with its "
-          "expectancy, its risk of ruin and the bet size the maths supports.")
-    if st.button("Add or test an algorithm", width="stretch"):
-        st.switch_page("pages/2_Workshop.py")
-with c2:
-    st.markdown("**Live workshop**")
-    plain("The everchanging side. Which tested rule is the best one to run "
-          "right now, given the news and where the position already is.")
-    if st.button("Open the live workshop", width="stretch"):
-        st.switch_page("pages/3_Live_workshop.py")
-with c3:
+with left:
+    st.markdown("### Trade")
+    plain("You choose. Run one base algorithm all session, or place the "
+          "orders yourself and let the app hold the rails — session window, "
+          "flatten deadline, daily loss limit, position caps.")
+    st.caption("Best when you have a view of your own, or you want to watch "
+               "one rule behave before trusting it.")
+    if st.button("Open Trade", type="primary", width="stretch"):
+        st.switch_page("pages/1_Trade.py")
+
+with right:
+    st.markdown("### Modular")
+    plain("The app chooses. It names the best-evidenced rule for this moment "
+          "out of everything backtested here, re-checks it as the session "
+          "moves, and tells you when the honest answer is to stand aside.")
+    st.caption("It will refuse to name one when nothing has a real edge. "
+               "That refusal is the feature.")
+    if st.button("Open Modular", width="stretch"):
+        st.switch_page("pages/2_Modular.py")
+
+# --------------------------------------------------------- what it says now
+st.divider()
+st.markdown("### What the app would pick right now")
+
+if rec.action == "stand_aside":
+    st.error(f"**Stand aside.** {rec.reason}")
+elif rec.best:
+    box = st.info if rec.confident else st.warning
+    box(money.md(
+        f"**{rec.best.strategy} on {rec.best.symbol}** — "
+        f"{rec.best.expectancy_pct:+.2f} bps a trade after costs, which is "
+        f"{money.fmt(money.amount(rec.best.expectancy_pct / 100.0, 1_000))} "
+        f"on a $1,000 trade, on {rec.best.trades:.0f} trades "
+        f"(t={rec.best.t_stat:.2f})."
+        + ("" if rec.confident else
+           "  The margin is inside the noise — the best-evidenced guess, not "
+           "a proven edge.")))
+
+if pool:
+    with st.expander(f"Every rule backtested here ({len(pool)})"):
+        import pandas as pd
+        st.dataframe(pd.DataFrame([{
+            "Rule": c.strategy, "Symbol": c.symbol,
+            "Per trade": f"{c.expectancy_pct:+.2f} bps",
+            "On $1,000": money.fmt(money.amount(c.expectancy_pct / 100.0, 1_000)),
+            "t": f"{c.t_stat:+.2f}", "Trades": int(c.trades),
+            "Usable": "yes" if c.credible else "too few trades",
+        } for c in rank(pool)[:40]]), width="stretch", hide_index=True)
+        st.caption(
+            "Ranked on evidence, not on the biggest number: a large average "
+            "on a handful of trades does not outrank a small one on hundreds. "
+            "Two rules in this table show more than +65 bps on fewer than ten "
+            "trades, and neither is recommendable.")
+
+st.divider()
+b1, b2 = st.columns(2)
+with b1:
+    st.markdown("**Backtest lab**")
+    plain("Build a rule and test it as a day trade. Anything that passes "
+          "through here becomes available to both modes above.")
+    if st.button("Open the lab", width="stretch"):
+        st.switch_page("pages/3_Backtest_lab.py")
+with b2:
     st.markdown("**Research**")
-    plain("The raw tools underneath: basket tests, event studies, and the "
-          "scoreboard of everything ever tried here.")
+    plain("The longer-horizon tools: basket tests, event studies, news, and "
+          "the scoreboard of everything ever tried.")
     if st.button("Open research", width="stretch"):
         st.switch_page("pages/4_Research.py")
 
-st.divider()
 st.caption(
-    "Every percentage on this page is backtested, not money that was made. "
-    "Nothing here places a real order; the live workshop trades a practice "
-    "account with fake money and refuses to run against a live one.")
+    "Nothing here places a real order. Both modes trade a practice account "
+    "with fake money and the code refuses a live one. Alpaca's free data is "
+    "15 minutes delayed, and the loop stands down rather than trading a stale "
+    "price — see research/PAPER_TRADING_LIMITS.md.")

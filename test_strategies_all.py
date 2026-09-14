@@ -18,8 +18,12 @@ from core.strategy import REGISTRY, Strategy
 # The news strategies need feature columns a plain OHLCV frame does not carry.
 # They are covered by test_news.py; skipping them here keeps this file about
 # the property rather than about fixture plumbing.
+# "ZZ " names are deliberate test fixtures from other modules -- oracles that
+# read ahead, rules that throw. They register globally, and the lookahead check
+# below correctly fails them, which is the check working rather than a problem
+# with the strategy library.
 PRICE_ONLY = {name: cls for name, cls in REGISTRY.items()
-              if not cls.requires_features}
+              if not cls.requires_features and not name.startswith("ZZ ")}
 
 
 def _series(n: int, seed: int) -> pd.DataFrame:
@@ -122,6 +126,29 @@ def test_short_history_does_not_crash(name):
 def test_unknown_parameters_are_rejected(name):
     with pytest.raises(TypeError):
         PRICE_ONLY[name](definitely_not_a_real_parameter=1)
+
+
+def test_the_fixtures_are_excluded_but_would_have_been_caught():
+    """The exclusion is by naming convention, so check it is not hiding a leak.
+
+    The intraday fixtures genuinely read ahead. If the lookahead test did not
+    fail them, the convention would be hiding a broken check rather than an
+    irrelevant one.
+    """
+    import pytest as _pytest
+    if "ZZ close oracle" not in REGISTRY:
+        _pytest.skip("intraday fixtures not loaded in this run")
+    assert "ZZ close oracle" not in PRICE_ONLY
+    with _pytest.raises(AssertionError):
+        test_no_lookahead.__wrapped__("ZZ close oracle", _series(900, seed=7))             if hasattr(test_no_lookahead, "__wrapped__") else _leak_check(
+                REGISTRY["ZZ close oracle"], _series(900, seed=7))
+
+
+def _leak_check(cls, bars):
+    cut = len(bars) - 200
+    up = cls().generate_signals(_splice(bars, cut, seed=99, drift=+0.6)).iloc[:cut]
+    down = cls().generate_signals(_splice(bars, cut, seed=1234, drift=-0.6)).iloc[:cut]
+    assert not np.flatnonzero(up.to_numpy(float) != down.to_numpy(float)).size
 
 
 def test_the_registry_actually_grew():
