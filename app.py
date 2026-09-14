@@ -232,8 +232,13 @@ with trade_tab:
              f"${account.cash:,.2f} of it uninvested")
     with head[3]:
         if held:
-            stat(st, "Holding", f"{held.qty:g} {held.symbol}",
-                 f"bought at {held.avg_price:,.2f}")
+            # A short was sold, not bought. Saying "bought" on a negative
+            # quantity is the one thing on this tile someone could not check.
+            short = held.qty < 0
+            stat(st, "Short" if short else "Holding",
+                 f"{held.qty:g} {held.symbol}",
+                 f"{'sold short at' if short else 'bought at'} "
+                 f"{held.avg_price:,.2f}")
         else:
             stat(st, "Holding", "nothing", "flat")
 
@@ -283,7 +288,7 @@ with trade_tab:
                 f'</div>', unsafe_allow_html=True)
     st.caption(stage.next_step)
     if stage.exit_plan:
-        with st.expander("When does it sell?"):
+        with st.expander("When does it close?"):
             for line in stage.exit_plan:
                 st.markdown(f"- {line}")
 
