@@ -96,6 +96,7 @@ class AlpacaBroker(Broker):
         raw = self._trading.get_orders(GetOrdersRequest(status=QueryOrderStatus.OPEN))
         return [
             Order(id=str(o.id), symbol=o.symbol.upper(), qty=_f(o.qty),
+                  limit_price=_f(getattr(o, "limit_price", None), None) or None,
                   side=str(getattr(o.side, "value", o.side)).lower(),
                   status=str(getattr(o.status, "value", o.status)),
                   filled_qty=_f(getattr(o, "filled_qty", 0)),
@@ -259,6 +260,7 @@ class AlpacaBroker(Broker):
             status=str(getattr(o.status, "value", o.status)),
             filled_qty=_f(getattr(o, "filled_qty", 0)),
             filled_price=_f(getattr(o, "filled_avg_price", None), None) or None,
+            limit_price=_f(getattr(o, "limit_price", None), None) or None,
             submitted_at=getattr(o, "submitted_at", datetime.now(timezone.utc)),
         )
 

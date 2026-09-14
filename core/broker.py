@@ -53,6 +53,8 @@ class Order:
     status: str
     filled_qty: float = 0.0
     filled_price: float | None = None
+    #: The resting price of a limit order. None for a market order.
+    limit_price: float | None = None
     submitted_at: datetime | None = None
 
     @property

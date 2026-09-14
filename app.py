@@ -245,6 +245,57 @@ with trade_tab:
         st.caption("No usable quote right now, so there is no honest number "
                    "to show for what this is worth.")
 
+    # ------------------------------------------- orders still waiting
+    # A resting limit is invisible otherwise: the loop reports "placed 1
+    # order", the money panel shows nothing because you are still flat, and
+    # there is no way to tell the difference between waiting and broken.
+    try:
+        working = [o for o in broker.get_open_orders()
+                   if str(getattr(o, "status", "")).lower() in
+                   {"new", "accepted", "partially_filled", "pending_new"}]
+    except BrokerError:
+        working = []
+
+    if working and not val:
+        st.markdown("")
+        st.markdown("**Waiting to fill** — nothing is in the market yet.")
+        for o in working[:4]:
+            try:
+                obid, oask = broker.get_quote(o.symbol)
+            except BrokerError:
+                obid = oask = 0.0
+            limit = float(getattr(o, "limit_price", 0) or 0)
+            buying = str(o.side).lower().endswith("buy")
+            # A buy fills when the ask comes down to it; a sell when the bid
+            # comes up. Comparing against the last trade instead would say
+            # "almost there" on an order that is nowhere near filling.
+            facing = oask if buying else obid
+            gap = (facing - limit) if buying else (limit - obid)
+            cost = limit * float(o.qty)
+
+            w = st.columns(4)
+            stat(w[0], "Order waiting",
+                 f"{'Buy' if buying else 'Sell'} {float(o.qty):g} {o.symbol}",
+                 f"limit {limit:,.2f}")
+            stat(w[1], "It would cost", f"${cost:,.2f}",
+                 "if it fills at your limit")
+            stat(w[2], "Market right now",
+                 f"{facing:,.2f}" if facing else "—",
+                 f"bid {obid:,.2f} / ask {oask:,.2f}" if obid else "no quote")
+            if facing:
+                pct = gap / limit * 100.0
+                stat(w[3], "Needs to move", f"{abs(gap):,.2f}",
+                     f"{abs(pct):.3f}%  "
+                     f"{'down' if (buying and gap > 0) or (not buying and gap < 0) else 'up'}"
+                     f" to fill",
+                     "good" if gap <= 0 else "")
+            st.caption(
+                f"Nothing has been bought yet, so there is no profit number "
+                f"to show. When it fills, this panel is replaced by what you "
+                f"put in, what it is worth, and what you would get for it. "
+                f"The order cancels itself if it is still unfilled after "
+                f"twelve bars.")
+
     st.divider()
 
     # ------------------------------------------------------------ settings
