@@ -99,6 +99,28 @@ LABELS = {
 }
 
 
+def closes_position(position, order) -> bool:
+    """Would that resting order take this position off the books?
+
+    Opposite side, same symbol, and enough size. A long is closed by a sell
+    and a short by a buy -- and the page needs to know, because "nothing is
+    running to close it" is false when a close is already sitting at the
+    venue waiting for the open. The warning that says so is worth having
+    exactly once; one that cries wolf gets ignored the next time.
+    """
+    if position is None or order is None:
+        return False
+    qty = float(getattr(position, "qty", 0) or 0)
+    if not qty:
+        return False
+    if str(getattr(order, "symbol", "")).upper() !=             str(getattr(position, "symbol", "")).upper():
+        return False
+    buying = str(getattr(order, "side", "")).lower() == "buy"
+    if buying == (qty > 0):
+        return False                   # same direction: adding, not closing
+    return abs(float(getattr(order, "qty", 0) or 0)) >= abs(qty)
+
+
 def build_steps(current: str, symbols=(), window=("10:30", "15:30"),
                 flatten_at=None, expiry_minutes: int = 60,
                 order_facts: dict | None = None,

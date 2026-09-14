@@ -37,6 +37,7 @@ from core import heartbeat as hb
 from core.livestate import Bridge
 from core.marketclock import CalendarError, MarketCalendar
 from core.positionvalue import value as value_position
+from core.tradestage import closes_position
 from core.tradestage import describe as describe_stage
 from core.workflow import render as render_workflow
 from core.recommend import load_intraday, rank
@@ -291,13 +292,20 @@ with trade_tab:
 
     # The one thing worth interrupting the page for: money in the market,
     # past the deadline that was supposed to take it out, and nothing running.
-    if held and flat_at and now >= flat_at and not watching:
+    closing_queued = closes_position(held, resting)
+    if held and flat_at and now >= flat_at and closing_queued:
+        # A warning that cries wolf gets ignored the next time it is right.
+        st.info(
+            f"**Past {flat_at:%H:%M}, and a close is already queued** — "
+            f"{resting.side} {abs(resting.qty):g} {resting.symbol}. It fills "
+            f"when the market next opens. Nothing further needs doing.")
+    elif held and flat_at and now >= flat_at and not watching:
         st.error(
             f"**Past {flat_at:%H:%M} and still holding.** Nothing is running "
             f"to close it, so it stays open. The stop and target are still "
             f"live at the venue. Press **Close all**, or start the "
             f"background loop: `python autorun.py`")
-    elif held and not watching:
+    elif held and not watching and not closing_queued:
         st.warning(
             f"**Nothing is running.** The {flat_at:%H:%M} close needs a cycle, "
             f"and cycles only happen when you press the button. Start the "

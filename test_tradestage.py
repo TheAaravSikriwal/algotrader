@@ -18,6 +18,7 @@ from core.tradestage import (
     ORDER_PLACED,
     SEQUENCE,
     WATCHING,
+    closes_position,
     describe,
 )
 
@@ -394,3 +395,44 @@ def test_before_the_deadline_there_is_no_scary_message():
     s = describe(position=pos, valuation=val, flatten_at="15:55",
                  past_deadline=False)
     assert "Past the end-of-day deadline" not in s.steps[2].waiting_for
+
+
+# -- is a close already waiting? ------------------------------------------
+
+def test_a_buy_closes_a_short():
+    """The case that made the warning wrong: past the deadline, still short,
+    and a buy already queued for the open. "Nothing is running to close it"
+    was false, and a warning that cries wolf gets ignored the next time."""
+    pos = FakePosition("QQQ", -1, 711.11)
+    assert closes_position(pos, FakeOrder("QQQ", 1, "buy", 0.0))
+
+
+def test_a_sell_closes_a_long():
+    pos = FakePosition("SPY", 2, 100.0)
+    assert closes_position(pos, FakeOrder("SPY", 2, "sell", 0.0))
+
+
+def test_an_order_the_same_way_round_is_adding_not_closing():
+    pos = FakePosition("QQQ", -1, 711.11)
+    assert not closes_position(pos, FakeOrder("QQQ", 1, "sell", 0.0))
+    long_pos = FakePosition("SPY", 2, 100.0)
+    assert not closes_position(long_pos, FakeOrder("SPY", 2, "buy", 0.0))
+
+
+def test_an_order_on_another_symbol_closes_nothing():
+    pos = FakePosition("QQQ", -1, 711.11)
+    assert not closes_position(pos, FakeOrder("SPY", 1, "buy", 0.0))
+
+
+def test_an_order_too_small_does_not_close_the_position():
+    """Half a close still leaves you holding something overnight."""
+    pos = FakePosition("SPY", 10, 100.0)
+    assert not closes_position(pos, FakeOrder("SPY", 4, "sell", 0.0))
+    assert closes_position(pos, FakeOrder("SPY", 10, "sell", 0.0))
+
+
+def test_nothing_to_compare_is_not_a_close():
+    assert not closes_position(None, FakeOrder("SPY", 1, "sell", 0.0))
+    assert not closes_position(FakePosition("SPY", 1, 100.0), None)
+    assert not closes_position(FakePosition("SPY", 0, 100.0),
+                               FakeOrder("SPY", 1, "sell", 0.0))
