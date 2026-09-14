@@ -8,6 +8,8 @@ data_cache/
 
 # run artifacts
 logs/
+# the app <-> Claude bridge: session state, not source
+live/
 runs/
 HALT
 
