@@ -30,6 +30,10 @@ def _f(x, default=0.0) -> float:
 class AlpacaBroker(Broker):
     name = "alpaca"
 
+    #: Which market-data feed live reads use. "iex" is real-time and free;
+    #: "sip" is the full tape but fifteen minutes behind on the free plan.
+    feed: str = "iex"
+
     def __init__(self, paper: bool = True, key: str | None = None,
                  secret: str | None = None):
         self.is_paper = bool(paper)
@@ -121,7 +125,18 @@ class AlpacaBroker(Broker):
         )
 
     # ---- market data ----------------------------------------------------
-    def get_bars(self, symbol: str, timeframe: str = "1Day", limit: int = 300) -> pd.DataFrame:
+    def get_bars(self, symbol: str, timeframe: str = "1Day", limit: int = 300,
+                 feed: str | None = None) -> pd.DataFrame:
+        """Recent bars. `feed` is "iex" or "sip"; None uses the account default.
+
+        This matters for anything trading live. The free plan delays the SIP
+        tape by fifteen minutes, so a loop reading SIP is deciding on prices a
+        quarter of an hour old and will refuse to act on them. IEX is
+        real-time and free, at the cost of carrying roughly 4% of the volume --
+        a different series rather than a faster one, which is why the
+        backtests were re-run on it before it was wired in here.
+        """
+        from alpaca.data.enums import DataFeed
         from alpaca.data.requests import StockBarsRequest
         from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 
@@ -146,8 +161,10 @@ class AlpacaBroker(Broker):
         # so pairing a wide window with a limit returns the OLDEST n bars --
         # a strategy would then be reading months-stale prices while looking
         # perfectly healthy. Fetch the window and take the tail instead.
+        chosen = (feed or self.feed or "sip").lower()
         bars = self._data.get_stock_bars(StockBarsRequest(
-            symbol_or_symbols=symbol.upper(), timeframe=tf, start=start))
+            symbol_or_symbols=symbol.upper(), timeframe=tf, start=start,
+            feed=DataFeed.IEX if chosen == "iex" else DataFeed.SIP))
         df = bars.df
         if df is None or df.empty:
             raise BrokerError(f"Alpaca returned no bars for {symbol}")

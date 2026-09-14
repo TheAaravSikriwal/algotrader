@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import re
 import sys
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -220,8 +220,12 @@ with trade_tab:
         wait = auto.seconds_until_ready(now)
 
         c = st.columns([1, 1, 4])
+        # An absolute time, not a countdown. Streamlit only re-renders on
+        # interaction, so "Ready in 29s" freezes at 29 and reads as a hang.
+        # A clock time stays true however long the page sits there.
+        ready_at = (now + timedelta(seconds=wait)).strftime("%H:%M:%S")
         label = ("▶ Run one cycle" if wait <= 0
-                 else f"▶ Ready in {wait:.0f}s")
+                 else f"▶ Ready at {ready_at}")
         if c[0].button(label, type="primary", width="stretch",
                        disabled=wait > 0):
             cyc = auto.cycle(now=now, execute=True)
@@ -235,9 +239,12 @@ with trade_tab:
             st.rerun()
         if wait > 0:
             st.caption(
-                f"Waiting {wait:.0f}s. The rule reads five-minute bars, so "
-                f"running it again inside one bar cannot find anything new — "
-                f"but it can place a second order against the same signal.")
+                f"Next cycle allowed at {ready_at} ({wait:.0f}s). The rule "
+                f"reads five-minute bars, so running it again inside one bar "
+                f"cannot find anything new — but it can place a second order "
+                f"against the same signal.")
+            if c[2].button("↻ Refresh", key="cooldown_refresh"):
+                st.rerun()
 
         state = bridge.state()
         age = bridge.state_age_seconds()
