@@ -148,6 +148,11 @@ def cycle_legend() -> str:
         f"{v.swatch} {v.words}" for v in CYCLE_KINDS.values())
 
 
+#: The strip always draws at least this many slots, so a block keeps the
+#: same size all day and the row visibly fills up.
+MIN_SLOTS = 40
+
+
 def cycle_strip(cycles: list[dict], mode: str = "light",
                 height: int = 96) -> go.Figure:
     """Every cycle as a block on a timeline, newest on the right.
@@ -178,7 +183,13 @@ def cycle_strip(cycles: list[dict], mode: str = "light",
     apply_layout(fig, mode, "", height)
     fig.update_layout(
         margin=dict(l=8, r=8, t=4, b=4), bargap=0.18, hovermode="closest",
-        xaxis=dict(visible=False), yaxis=dict(visible=False, range=[0, 1.1]))
+        xaxis=dict(visible=False,
+                   # Keep room for a day's worth of cycles from the first one.
+                   # Letting four bars share the full width drew four slabs
+                   # the size of the panel, which reads as a chart of
+                   # something important rather than as a day just started.
+                   range=[-0.6, max(len(cycles), MIN_SLOTS) - 0.4]),
+        yaxis=dict(visible=False, range=[0, 1.1]))
     return fig
 
 

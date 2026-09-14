@@ -66,8 +66,13 @@ def apply_layout(fig, mode: str, title: str = "", height: int = 380, legend: boo
     top = (72 if legend else 46) if title else 12
     fig.update_layout(
         # title pinned to the figure container so the legend can sit below it
-        title=dict(text=title, font=dict(size=15, color=t["text_primary"]),
-                   yref="container", y=1.0, yanchor="top", pad=dict(t=14, l=4)) if title else None,
+        # `title=None` does not clear the title: plotly.py builds an empty
+        # Title object from it, which serialises as `"title": {}`, and
+        # plotly.js renders a title whose text is undefined as the literal
+        # string "undefined" above the chart. An explicit empty string is the
+        # only way to say "no title".
+        title=dict(text=title or "", font=dict(size=15, color=t["text_primary"]),
+                   yref="container", y=1.0, yanchor="top", pad=dict(t=14, l=4)),
         paper_bgcolor=t["surface"],
         plot_bgcolor=t["surface"],
         font=dict(family=FONT, size=12, color=t["text_secondary"]),

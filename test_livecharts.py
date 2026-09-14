@@ -124,3 +124,60 @@ def test_hovering_a_block_says_when_it_ran_and_what_it_decided():
                         "label": "Watching — no setup"}], "light")
     assert "14:57" in fig.data[0].hovertext[0]
     assert "no setup" in fig.data[0].hovertext[0]
+
+
+# -- the chart's own chrome -----------------------------------------------
+
+def test_a_chart_with_no_title_does_not_print_the_word_undefined():
+    """`title=None` does not clear a title. plotly.py builds an empty Title
+    object from it, which serialises as `"title": {}`, and plotly.js renders
+    a title whose text is undefined as the literal string "undefined" -- which
+    is what sat above the cycle strip and the price chart."""
+    import json
+    for fig in (cycle_strip([{"kind": "watching"}], "light"),
+                cycle_strip([], "light")):
+        title = json.loads(fig.to_json())["layout"].get("title", {})
+        assert title.get("text") == "" or "No cycles" in title.get("text", "")
+        assert title.get("text") is not None
+
+
+def test_a_real_title_still_survives():
+    import json
+    import plotly.graph_objects as go
+    from core.theme import apply_layout
+    fig = go.Figure()
+    apply_layout(fig, "light", "QQQ today")
+    assert json.loads(fig.to_json())["layout"]["title"]["text"] == "QQQ today"
+
+
+def test_a_few_cycles_do_not_stretch_into_slabs():
+    """Four bars sharing the full width drew four blocks the size of the
+    panel, which reads as a chart of something important rather than as a day
+    that has just started."""
+    import json
+    from core.livecharts import MIN_SLOTS
+    fig = cycle_strip([{"kind": "watching"}] * 3, "light")
+    lo, hi = json.loads(fig.to_json())["layout"]["xaxis"]["range"]
+    assert hi - lo >= MIN_SLOTS - 1
+
+
+def test_a_full_day_of_cycles_still_all_fit():
+    import json
+    from core.livecharts import MIN_SLOTS
+    n = MIN_SLOTS + 25
+    fig = cycle_strip([{"kind": "watching"}] * n, "light")
+    lo, hi = json.loads(fig.to_json())["layout"]["xaxis"]["range"]
+    assert hi >= n - 1, "the newest cycle must be inside the axis"
+
+
+def test_a_title_passed_as_none_is_also_absent_rather_than_undefined():
+    """The signature defaults to "", so `text=title` looks equivalent to
+    `text=title or ""`. It is not: a caller passing None explicitly puts the
+    word "undefined" back on the chart, and that is exactly the shape the
+    original bug had."""
+    import json
+    import plotly.graph_objects as go
+    from core.theme import apply_layout
+    fig = go.Figure()
+    apply_layout(fig, "light", None)
+    assert json.loads(fig.to_json())["layout"]["title"]["text"] == ""
