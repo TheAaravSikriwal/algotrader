@@ -93,6 +93,33 @@ class Valuation:
         return self.avg_price + (self.ask - self.bid) if self.is_long \
             else self.avg_price - (self.ask - self.bid)
 
+    # -- saying it the right way round ------------------------------------
+    #
+    # Every one of these was wrong on a short at some point. A page that says
+    # "if you sold this second" about a position you already sold, and "you
+    # would receive" about money you are about to pay, is not a wording nit:
+    # it inverts the trade in the reader's head.
+
+    @property
+    def close_verb(self) -> str:
+        """What closing this position is called. A short is bought back."""
+        return "sell" if self.is_long else "buy back"
+
+    @property
+    def closing_phrase(self) -> str:
+        """How the close happens, including which side of the book it hits."""
+        return ("selling at the bid" if self.is_long
+                else "buying back at the ask")
+
+    @property
+    def cash_direction(self) -> str:
+        """Whether closing pays you or costs you, before profit or loss."""
+        return "You would receive" if self.is_long else "You would pay"
+
+    @property
+    def breakeven_phrase(self) -> str:
+        return ("bid reaches" if self.is_long else "ask falls to")
+
     @property
     def move_to_breakeven_pct(self) -> float:
         if not self.avg_price:

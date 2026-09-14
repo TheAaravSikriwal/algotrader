@@ -14,6 +14,7 @@ from core.money import (
     bps,
     describe,
     fmt,
+    md,
     grow,
     once,
     over,
@@ -228,3 +229,15 @@ def test_unmd_recovers_a_string_that_went_to_the_wrong_place():
     assert md(plain) != plain
     assert unmd(md(plain)) == plain
     assert unmd(plain) == plain, "already-plain text passes through untouched"
+
+
+def test_md_formats_a_number_rather_than_crashing_on_it():
+    """Every other function here takes an amount, so passing one to md() is
+    the obvious mistake. It used to fail inside str.replace with a message
+    naming neither this module nor the caller."""
+    assert md(0.19) == md(fmt(0.19))
+    assert md(-2.5).startswith("-")
+
+
+def test_md_still_escapes_a_string_the_way_it_did():
+    assert md("costs $5.00 today") == "costs " + chr(92) + "$5.00 today"

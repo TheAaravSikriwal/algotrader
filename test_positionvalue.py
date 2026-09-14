@@ -119,3 +119,46 @@ def test_a_good_quote_prices_the_position():
     assert v is not None
     assert v.put_in == pytest.approx(2287.95)
     assert v.profit_if_sold == pytest.approx(0.03, abs=0.001)
+
+
+# -- saying it the right way round ----------------------------------------
+
+def _a_long():
+    return Valuation("SPY", 2, 100.00, 100.50, 100.60)
+
+
+def _a_short():
+    return Valuation("QQQ", -1, 711.11, 710.91, 710.94)
+
+
+def test_a_short_is_closed_by_buying_it_back():
+    assert _a_short().close_verb == "buy back"
+    assert _a_long().close_verb == "sell"
+
+
+def test_closing_a_short_costs_money_rather_than_paying_you():
+    """The page said 'You would receive $710.94' about money you are about to
+    hand over. That inverts the trade in the reader's head."""
+    assert _a_short().cash_direction == "You would pay"
+    assert _a_long().cash_direction == "You would receive"
+
+
+def test_closing_a_short_lifts_the_ask_not_the_bid():
+    assert _a_short().closing_phrase == "buying back at the ask"
+    assert _a_long().closing_phrase == "selling at the bid"
+
+
+def test_the_number_behind_the_wording_was_always_right():
+    """Worth pinning: the arithmetic was correct throughout, only the labels
+    were wrong. Sold at 711.11, bought back at the ask 710.94."""
+    v = _a_short()
+    assert v.exit_price == pytest.approx(710.94)
+    assert v.profit_if_sold == pytest.approx(0.17)
+    assert v.if_sold_now == pytest.approx(710.94)
+
+
+def test_a_short_breaks_even_when_the_ask_falls_not_when_the_bid_rises():
+    """A short is closed by buying at the ask, so the ask is the price that
+    has to come to you. Naming the bid points at the wrong number."""
+    assert _a_short().breakeven_phrase == "ask falls to"
+    assert _a_long().breakeven_phrase == "bid reaches"

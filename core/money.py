@@ -148,7 +148,14 @@ def md(text: str) -> str:
     amounts silently becomes an equation and the text between them renders as
     italic symbols -- which is exactly what happened the first time this
     module's output reached a markdown block.
+
+    A number is formatted first. Passing one is the obvious mistake --
+    every other function here takes an amount -- and it used to fail
+    inside `str.replace` with a message naming neither this module nor
+    the caller.
     """
+    if isinstance(text, (int, float)) and not isinstance(text, bool):
+        text = fmt(text)
     return text.replace("$", "\\$")
 
 

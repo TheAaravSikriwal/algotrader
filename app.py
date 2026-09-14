@@ -280,48 +280,57 @@ with trade_tab:
 
     st.markdown(render_workflow(stage.steps, "How one trade runs"),
                 unsafe_allow_html=True)
-    st.caption("Hover any box to see what has to happen there and what the "
-               "app does about it — including the ones it has not "
-               "reached yet.")
+    st.caption("Hover any box for what has to happen there and what the app "
+               "does about it — including the ones it has not reached yet.")
+
+    # --------------------------------------------------- the position, once
+    # Previously the same trade was described four times over: a headline, a
+    # paragraph, a caption, four tiles and a long footnote, with the tiles
+    # labelled for a long position and the trade often short. Three numbers
+    # answer what people actually ask -- what is in, what closing it now is
+    # worth, and when it goes -- and everything else moves behind one link.
     st.markdown(f"#### {stage.headline}")
-    st.markdown(f'<div style="font-size:15px;line-height:1.55">{stage.detail}'
-                f'</div>', unsafe_allow_html=True)
-    st.caption(stage.next_step)
-    if stage.exit_plan:
-        with st.expander("When does it close?"):
-            for line in stage.exit_plan:
-                st.markdown(f"- {line}")
 
     if val:
-        st.markdown("")
-        m = st.columns(4)
-        stat(m[0], "You put in", f"${val.put_in:,.2f}",
-             f"{val.shares:g} {val.symbol} at {val.avg_price:,.2f}")
-        stat(m[1], "Worth right now", f"${val.worth_now:,.2f}",
-             f"mid {val.mid:,.2f}  ·  bid {val.bid:,.2f} / ask {val.ask:,.2f}")
+        closes = "It closes at the target, the stop, or the end of the day."
+        m = st.columns(3)
+        stat(m[0], "In the market", f"${val.put_in:,.2f}",
+             f"{abs(val.shares):g} {val.symbol} "
+             f"{'bought' if val.is_long else 'sold short'} at "
+             f"{val.avg_price:,.2f}")
         tone = "good" if val.profit_if_sold >= 0 else "bad"
-        stat(m[2], "If you sold this second",
-             f"{'+' if val.profit_if_sold >= 0 else ''}"
-             f"${val.profit_if_sold:,.2f}",
-             f"{val.profit_pct:+.3f}% of what you put in", tone)
-        stat(m[3], "You would receive", f"${val.if_sold_now:,.2f}",
-             f"selling at the {'bid' if val.is_long else 'ask'} "
-             f"{val.exit_price:,.2f}")
+        stat(m[1], f"{val.close_verb.capitalize()} now".replace("Buy back now",
+                                                                "Buy it back now"),
+             f"{'+' if val.profit_if_sold >= 0 else '-'}"
+             f"${abs(val.profit_if_sold):,.2f}",
+             f"{val.profit_pct:+.3f}% — {val.closing_phrase} {val.exit_price:,.2f}",
+             tone)
+        stat(m[2], "It closes when",
+             f"{flat_at:%H:%M}" if flat_at else "target or stop",
+             "or sooner, if the target or the stop is hit first")
 
-        # The gap between the two profit numbers is the point of showing both.
-        st.caption(
-            f"Marked at the midpoint it looks like "
-            f"{money.fmt(val.profit_at_mid)}, but selling means "
-            f"{'hitting the bid' if val.is_long else 'lifting the ask'}, "
-            f"so {money.fmt(val.spread_cost)} of that is the spread. "
-            f"You break even once the "
-            f"{'bid reaches' if val.is_long else 'ask falls to'} "
-            f"{val.breakeven_price:,.2f} — "
-            f"{abs(val.move_to_breakeven_pct):.3f}% away. "
-            f"Sitting exactly at your entry price is a small loss, not flat.")
-    elif held:
-        st.caption("No usable quote right now, so there is no honest number "
-                   "to show for what this is worth.")
+        with st.expander("The detail — spread, break-even, the exact exits"):
+            d = st.columns(2)
+            d[0].markdown(
+                f"**{val.cash_direction} ${abs(val.if_sold_now):,.2f}** to "
+                f"close it, {val.closing_phrase} of {val.exit_price:,.2f}.\n\n"
+                f"Quote right now: bid {val.bid:,.2f} / ask {val.ask:,.2f}, "
+                f"mid {val.mid:,.2f}.")
+            d[1].markdown(
+                f"Marked at the midpoint it looks like "
+                f"{money.md(money.fmt(val.profit_at_mid))}, but {val.closing_phrase} "
+                f"costs {money.md(money.fmt(val.spread_cost))} of that in spread.\n\n"
+                f"You break even once the {val.breakeven_phrase} "
+                f"{val.breakeven_price:,.2f} — "
+                f"{abs(val.move_to_breakeven_pct):.3f}% away. Sitting exactly "
+                f"at your entry price is a small loss, not flat.")
+    else:
+        st.markdown(f'<div style="font-size:15px;line-height:1.55">'
+                    f'{stage.detail}</div>', unsafe_allow_html=True)
+        st.caption(stage.next_step)
+        if held:
+            st.caption("No usable quote right now, so there is no honest "
+                       "number to show for what this is worth.")
 
     # ------------------------------------------- orders still waiting
     # A resting limit is invisible otherwise: the loop reports "placed 1
