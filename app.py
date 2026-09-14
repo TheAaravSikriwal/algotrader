@@ -36,6 +36,7 @@ from core.livecharts import (candidate_bars, cycle_strip, pnl_chart,
 from core.livestate import Bridge
 from core.marketclock import CalendarError, MarketCalendar
 from core.positionvalue import value as value_position
+from core.tradestage import SEQUENCE, TITLES, describe as describe_stage
 from core.recommend import load_intraday, rank
 from core.ui import active_mode, inject_css
 from core.version import current as current_version
@@ -89,6 +90,29 @@ def once_only(key: str) -> bool:
     seen.add(token)
     st.session_state[f"_token_{key}"] = uuid.uuid4().hex
     return True
+
+
+def stepper(stage) -> str:
+    """Four boxes, the current one lit. The question this page kept failing to
+    answer was "what is happening right now", and a row of identical grey
+    blocks answered "it ran" instead."""
+    out = ['<div style="display:flex;gap:8px;margin:6px 0 14px">']
+    for i, key in enumerate(SEQUENCE):
+        done = i < stage.index
+        here = i == stage.index
+        if here:
+            bg, fg, bd = "rgba(77,190,130,.16)", "var(--good)", "var(--good)"
+        elif done:
+            bg, fg, bd = "transparent", "rgba(128,128,128,.85)", "rgba(128,128,128,.35)"
+        else:
+            bg, fg, bd = "transparent", "rgba(128,128,128,.45)", "rgba(128,128,128,.18)"
+        out.append(
+            f'<div style="flex:1;padding:9px 12px;border-radius:8px;'
+            f'background:{bg};border:1px solid {bd};color:{fg};'
+            f'font-size:13px;font-weight:{"650" if here else "500"}">'
+            f'{"● " if here else ""}{TITLES[key]}</div>')
+    out.append("</div>")
+    return "".join(out)
 
 
 def cycle_kind(row: dict) -> str:
@@ -214,6 +238,40 @@ with trade_tab:
             val = value_position(held, bid, ask)
         except BrokerError:
             val = None
+
+    # ---- what is happening, in one line -------------------------------
+    try:
+        resting = next((o for o in broker.get_open_orders()
+                        if str(getattr(o, "status", "")).lower() in
+                        {"new", "accepted", "partially_filled", "pending_new"}),
+                       None)
+    except BrokerError:
+        resting = None
+
+    order_quote = None
+    if resting is not None:
+        try:
+            order_quote = broker.get_quote(resting.symbol)
+        except BrokerError:
+            order_quote = None
+
+    published = bridge.state()
+    stage = describe_stage(
+        position=held, order=resting, valuation=val, quote=order_quote,
+        blocks=published.get("blocks") or [],
+        flatten_at=f"{flat_at:%H:%M}" if flat_at else None,
+        closed_today=any(cycle_kind(r) == "flatten"
+                         for r in bridge.decisions(limit=60)))
+
+    st.markdown(stepper(stage), unsafe_allow_html=True)
+    st.markdown(f"#### {stage.headline}")
+    st.markdown(f'<div style="font-size:15px;line-height:1.55">{stage.detail}'
+                f'</div>', unsafe_allow_html=True)
+    st.caption(stage.next_step)
+    if stage.exit_plan:
+        with st.expander("When does it sell?"):
+            for line in stage.exit_plan:
+                st.markdown(f"- {line}")
 
     if val:
         st.markdown("")
@@ -505,7 +563,20 @@ with trade_tab:
             c["at"] = None
 
     if cycles:
-        st.markdown("**Every cycle today**")
+        head = st.columns([3, 1])
+        head[0].markdown("**Every cycle today**")
+        if head[1].button("Clear today", width="stretch",
+                          help="Wipes the cycle log so you can watch a run "
+                               "from scratch. Touches nothing in the account."):
+            if once_only("clear_log"):
+                bridge.decisions_path.unlink(missing_ok=True)
+                bridge.state_path.unlink(missing_ok=True)
+            st.rerun()
+        st.caption(
+            "Each block is one cycle:  "
+            "🟩 placed an order  ·  🟥 closed out  ·  "
+            "🟦 watched, no setup  ·  ⬜ stood down (a rail blocked it)  ·  "
+            "🟧 told to wait (you clicked too soon).")
         st.plotly_chart(cycle_strip(cycles[-60:], MODE), width="stretch",
                         config={"displayModeBar": False})
 
