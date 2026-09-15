@@ -15,6 +15,20 @@ from datetime import datetime, timedelta, timezone
 from core import heartbeat as hb
 
 
+def _quiet() -> dict:
+    """Spawn a child without putting a console window on the user's screen.
+
+    python.exe is a console application, so Windows hands every plain
+    `Popen([sys.executable, ...])` its own console. A test suite that does
+    that flashes black windows up on every run, which is exactly what it did.
+    """
+    import os
+    import subprocess
+    if os.name != "nt":
+        return {}
+    return {"creationflags": subprocess.CREATE_NO_WINDOW}
+
+
 def _at(root, seconds_ago: float, pid: int | None = None):
     """Write a heartbeat as though it happened `seconds_ago`."""
     row = {"pid": os.getpid() if pid is None else pid,
@@ -157,7 +171,7 @@ def test_a_just_exited_process_is_dead_even_while_a_handle_is_held():
     a dead child look alive. GetExitCodeProcess answers directly."""
     import subprocess
     import sys
-    p = subprocess.Popen([sys.executable, "-c", "pass"])
+    p = subprocess.Popen([sys.executable, "-c", "pass"], **_quiet())
     p.wait()
     assert p.poll() is not None, "the child really has exited"
     assert not hb.pid_alive(p.pid)

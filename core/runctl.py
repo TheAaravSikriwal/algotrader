@@ -43,22 +43,34 @@ def log_path(name: str = "") -> Path:
     return LOGS / (f"autorun-{slug}.log" if slug else "autorun.log")
 
 
-#: Windows console flags.
+#: How the loop is launched on Windows, decided by measurement rather than by
+#: what the flag names suggest.
 #:
-#: DETACHED_PROCESS alone is not enough: python.exe is a console application,
-#: so Windows gives it a *new* console window, which flashes up on the user's
-#: screen every time the loop starts. CREATE_NO_WINDOW is the one that keeps
-#: it invisible. Both are needed -- detached so it outlives the app, no-window
-#: so nobody has to look at it.
-_DETACHED_PROCESS = 0x00000008
+#: CREATE_NO_WINDOW gives the child no console window, which is the point --
+#: a black window flashing up on every start is not acceptable. It also
+#: survives the app closing: on Windows a child is independent of its parent
+#: unless a Job object says otherwise, and nothing here uses one.
+#:
+#: DETACHED_PROCESS looks like the more thorough choice and is a trap. It
+#: works when the parent has a normal console and kills the child with
+#: 0xC000013A (STATUS_CONTROL_C_EXIT) when the parent has none -- under a test
+#: runner, for instance. Measured both ways:
+#:
+#:     flags                  plain script     under pytest
+#:     DETACHED_PROCESS       alive            dies 0xC000013A
+#:     CREATE_NO_WINDOW       alive            alive
+#:
+#: The two are also mutually exclusive, and combining them kills the child
+#: outright in every context. So: no-window, never detached.
 _CREATE_NO_WINDOW = 0x08000000
 
 
 def _detached_flags() -> dict:
     """Keep the loop alive when the app goes away, and off the screen."""
     if os.name == "nt":
+        # The new process group stops a Ctrl-C in the parent's console from
+        # reaching the loop, which is the one signal that should not.
         return {"creationflags": (subprocess.CREATE_NEW_PROCESS_GROUP
-                                  | _DETACHED_PROCESS
                                   | _CREATE_NO_WINDOW)}
     return {"start_new_session": True}
 

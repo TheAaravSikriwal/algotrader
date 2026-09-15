@@ -111,7 +111,7 @@ def _pid_alive_windows(pid: int) -> bool:
     handle = kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION,
                                   False, int(pid))
     if not handle:
-        return True
+        return False
     try:
         code = ctypes.c_ulong()
         if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):

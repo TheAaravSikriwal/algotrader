@@ -160,18 +160,19 @@ def test_it_launches_detached_so_it_survives_the_page_reloading(monkeypatch):
     that process would die on the next click."""
     flags = runctl._detached_flags()
     if os.name == "nt":
-        assert flags["creationflags"] & runctl._DETACHED_PROCESS
+        assert flags["creationflags"] & runctl._CREATE_NO_WINDOW
     else:
         assert flags["start_new_session"] is True
 
 
-def test_it_does_not_put_a_console_window_on_the_screen():
-    """python.exe is a console application, so DETACHED_PROCESS alone makes
-    Windows open a *new* console for it -- a black window flashing up every
-    time the loop starts, and staying there while it runs."""
+def test_it_never_asks_for_detached_process():
+    """DETACHED_PROCESS reads like the more thorough choice and is a trap: it
+    kills the child with 0xC000013A when the parent has no console of its own,
+    and combining it with CREATE_NO_WINDOW kills the child everywhere.
+    Measured in both contexts; see the note in runctl."""
     if os.name != "nt":
         return
-    assert runctl._detached_flags()["creationflags"] & runctl._CREATE_NO_WINDOW
+    assert not (runctl._detached_flags()["creationflags"] & 0x00000008)
 
 
 def test_the_command_carries_the_settings_the_page_is_showing(tmp_path, monkeypatch):
