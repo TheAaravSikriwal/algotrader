@@ -1,11 +1,94 @@
-# Backtester
+# algotrader
 
-A backtesting workbench for US equities, built around Alpaca. Pick a symbol, pick
-a rule, see what it would have done — with a dashboard, a CLI, and an engine you
-can trust not to cheat.
+A backtesting and paper-trading workbench for US equities, built around Alpaca.
+Pick a symbol, pick a rule, see what it would have done — with a dashboard, a
+CLI, and an engine that structurally cannot cheat.
 
-Nothing here places an order. That comes later, and only after a rule has
-survived a backtest and a paper account.
+I built it to find out whether I could day-trade profitably with an algorithm.
+The answer turned out to be no, and most of the work in here is the effort of
+establishing that properly instead of guessing.
+
+## What it found
+
+I implemented 33 strategies — moving-average crossovers, RSI reversion,
+breakouts, some published academic rules, and a handful pulled out of trading
+books and forums. All of them got tested on daily bars and 5-minute bars,
+across a basket of liquid ETFs and large caps, with costs on both sides of
+every trade.
+
+Nothing worked. Not "nothing worked well" — nothing cleared the bar at all.
+
+Of 348 strategy-symbol pairs on daily data, **zero** passed a
+Bonferroni-corrected significance test and **zero** passed Benjamini-Hochberg
+FDR at 5%. Only 7.5% beat simply buying and holding, which is about what you'd
+get from coin flips. I re-ran the whole sweep at 0, 2, 5 and 10 basis points of
+cost in case I'd been unfair on fees. Same answer every time, so the problem
+wasn't my cost model. Intraday was no better: 0 of 70 pairs on SIP data, 0 of
+118 on IEX.
+
+### The thing that nearly fooled me
+
+Early on a lot of strategies looked like they were beating buy-and-hold. 86% of
+them beat it on TLT.
+
+TLT was the one instrument in the basket that went *down* over the test period.
+On the eleven that went up, the strategies won 0% of the time.
+
+So they weren't timing anything. They were just out of the market some of the
+time, and being out of the market is wonderful when the market falls. That's
+why there are deliberately meaningless strategies in here — "Day of week",
+"Turn of month" — running alongside the real ones as controls. The nonsense
+ones kept scoring better than the real ones. If your fake strategy beats your
+real strategy, your real strategy is noise.
+
+### The one that survived, and how it died
+
+One rule got further than the rest: a limit order resting at the midpoint of a
+three-bar fair value gap. The gross edge was real and strongly significant —
+t of 5.89 over 880 trades in the first fifteen minutes of the session. I was
+quite pleased with myself for about a day.
+
+Then I ran the same rule at different times of day:
+
+| Window | Trades | Gross (bps) | t | Spread | Net |
+|---|---|---|---|---|---|
+| 09:30–09:45 | 880 | 5.38 | 5.89 | 3.78 | **+1.60** |
+| 09:30–10:30 | 12,029 | 3.41 | 6.19 | 2.34 | **+1.07** |
+| Full session | 140,879 | 0.91 | 5.80 | 2.10 | **−1.19** |
+| 10:30–15:30 | 121,631 | 0.67 | 3.85 | 1.59 | **−0.92** |
+
+The edge lives almost entirely in the opening minutes, which is also exactly
+where the spread is widest. Move to a quieter window where trading is cheaper
+and the edge vanishes along with the cost.
+
+The edge *is* the spread. I was getting paid for providing liquidity roughly
+what providing liquidity is worth — which, said out loud, is what an efficient
+market is supposed to do. Even the two positive rows clear a 90th-percentile
+opening spread of 10.6 bps by nothing; at that percentile the best variant nets
+about −5 bps.
+
+The rule is still here (`core/daytrade.py`) and the paper trader still runs it,
+but not because I think it makes money. It's fully specified and
+non-discretionary, which makes it a good vehicle for testing whether the order
+plumbing works.
+
+### Paper trading doesn't prove what I assumed it proved
+
+Worth saying plainly. Alpaca's paper simulator fills orders using something
+very close to the backtest's own fill rule. I put a limit at the bid and it
+filled in two seconds, round-trip cost 0.13 bps against a quoted spread of
+2.0 bps. No real venue gives you that. Real fills are fewer and adversely
+selected — you get filled when the other side wanted you to be.
+
+So paper trading here validates the plumbing: orders go out correctly, brackets
+attach, positions close when they should, the rails fire. It cannot validate
+profitability. Longer writeup in `research/PAPER_TRADING_LIMITS.md`.
+
+---
+
+Nothing in this repo places a live order. There's a hard guard against
+non-paper accounts with no override flag, and the live API credentials are
+separate environment variables I've deliberately left empty.
 
 ## Setup
 
@@ -40,13 +123,22 @@ Free paper keys: <https://app.alpaca.markets> → *Paper Trading* → *API Keys*
 | `core/metrics.py` | Sharpe, Sortino, drawdown, win rate, profit factor… |
 | `core/indicators.py` | SMA, EMA, RSI, ATR, Bollinger, Donchian, MACD |
 | `core/charts.py` | Plotly figures |
-| `strategies/builtin.py` | Seven reference rules — **your templates** |
+| `strategies/builtin.py` | Reference rules — **your templates** (33 registered in total) |
 | `run_live.py` | The paper/live trading loop |
 | `core/trader.py` | Reconciliation, risk rails, kill switch |
 | `core/broker.py` | The `Broker` interface every venue implements |
 | `brokers/alpaca.py` | Alpaca adapter (paper and live) |
 | `brokers/fake.py` | In-memory broker for testing the loop offline |
 | `replay.py` | Replay history through the live loop at full speed |
+| `core/daytrade.py` | The intraday fair-value-gap rule, and what it really scores |
+| `core/intraday.py` | 5-minute backtester — flat by the close, window-confined |
+| `core/daytrader.py` | Live day-trading loop, risk rails, paper-only guard |
+| `core/marketclock.py` | Exchange calendar, half-days, flatten deadlines |
+| `core/fills.py` | Realised slippage against the quoted spread |
+| `core/expectancy.py` | Kelly, break-even win rate, risk of ruin |
+| `autorun.py` | Background loop so the end-of-day flatten actually happens |
+| `core/heartbeat.py` | Whether a background loop is genuinely alive |
+| `reset.py` | Put the paper account back to a clean state |
 | `brokers/replay.py` | Historical broker with a strictly enforced clock |
 | `tournament.py` | Walk-forward leaderboard across strategies and symbols |
 | `core/tournament.py` | Walk-forward folds, parameter search, ranking filters |
@@ -119,12 +211,18 @@ python cli.py --symbol QQQ --strategy "Donchian breakout" --stop-loss 8 --save-t
 ## Tests
 
 ```bash
-python test_engine.py
+python -m pytest
 ```
 
-They check the no-lookahead rule, that costs actually cost money, that stops cap
-losses at the stop level, and that realised trade P&L reconciles with the equity
-curve.
+905 of them, across 36 files. They check the no-lookahead rule, that costs
+actually cost money, that stops cap losses at the stop level, that realised
+trade P&L reconciles with the equity curve, and a great deal about the live
+loop — that it refuses a non-paper account, that it won't double an order while
+the first is unfilled, that it flattens before the close.
+
+The habit that made them worth anything: after fixing a bug, break it again on
+purpose and confirm a test goes red. If it doesn't, the test is decorative.
+That's caught more bad tests here than bad code.
 
 ## The tournament — finding which strategies actually work
 
@@ -528,8 +626,77 @@ keep you well clear of that.
 Implement `core.broker.Broker` — six methods — and the trading loop works
 unchanged. `brokers/fake.py` is the smallest working example.
 
+## Things I got wrong
+
+Keeping this section because the bugs taught me more than the successes did,
+and because a repo with no mistakes in it is usually a repo that hasn't been
+looked at hard enough.
+
+**The timezone one.** `df.index.tz_convert(None)` doesn't convert to local
+time. It drops the timezone and leaves you sitting in UTC. I had a
+`between_time("09:30", "16:00")` filter downstream that I thought was selecting
+the US session — it was selecting a window in UTC, capturing 36.3% of the day's
+volume and mostly the wrong part of it. Every intraday number I had was
+garbage, and none of it looked wrong.
+
+**Tests that passed for the wrong reason.** I got into the habit of breaking
+each fix on purpose to check that a test caught it. That turned up several
+tests which were testing nothing at all. The best one: a test that verified
+tamper-detection by string-replacing `10.0` in a JSON file, where the value had
+actually serialised as `9.999999999999432`. The replacement never matched, so
+the file was never tampered with, so the test passed. It had been green for
+days. I also needed three attempts to write the lookahead test correctly — the
+first two let a strategy that could see the future sail straight through, which
+is worse than having no test.
+
+**A `--dry-run` that wasn't.** The flag whose entire job is to send nothing
+sent three real market orders closing a live position, because the end-of-day
+flatten sat outside the `if execute:` check. I found it by watching the order
+log while testing something unrelated.
+
+**A trade held overnight.** The UI said "closes automatically at 15:55 —
+nothing is held overnight". Nothing was running to do it. Cycles only happened
+when I clicked a button and I'd stopped clicking. The position sat five minutes
+past its own deadline and then through the night. That's what `autorun.py` and
+the heartbeat are for — the fix wasn't to soften the wording, it was to make
+the sentence true.
+
+**`os.kill(pid, 0)` on Windows.** Not a working liveness check. It only tells
+you `OpenProcess` succeeded, and the handle stays valid after the process
+exits, so anything still holding one makes a dead process look alive. It also
+asks for `PROCESS_ALL_ACCESS`, so a process you don't own a handle to can come
+back looking dead — and that's the dangerous direction, because a running
+trading loop reading as dead means the app offers to start a second one, and
+two loops on one account both act on the same signal. Replaced with
+`OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)` plus `GetExitCodeProcess`.
+
+**Colours that disagreed with their own legend.** The cycle strip captioned
+"watched, no setup" with a blue square and drew it in orange, and captioned
+"told to wait" orange while drawing it the same green as "placed an order" — so
+the block meaning a trade happened looked like the block meaning nothing did. A
+legend that disagrees with the picture is worse than no legend, because it
+doesn't leave you guessing, it tells you the wrong thing confidently.
+
+## Where I'd go next
+
+Not further down this road. The result matches what the academic literature
+says about retail-accessible technical strategies, which is that they don't
+survive costs. If I picked it up again I'd want something structurally
+different — genuinely alternative data, or a market where I have some actual
+informational reason to think I know something.
+
+What I'd keep is the harness. The engine, the cost model, the significance
+testing and the fill measurement are all reusable, and infrastructure that
+tells you the truth is worth considerably more than another strategy that
+doesn't.
+
 ---
 
 Backtested results are hypothetical. This is software for testing your own ideas,
 not financial advice, and past performance of any rule here says nothing about its
 future performance.
+
+One more time, since this is public: nothing in here has a demonstrated edge,
+and I've put real effort into showing exactly that. Don't remove the paper-only
+guard and point it at real money. If you want to reuse parts of it, the engine
+and the statistics are the bits worth taking.
