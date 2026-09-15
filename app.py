@@ -34,6 +34,7 @@ from core.fills import FillLog, FillRecord
 from core.livecharts import (CYCLE_KINDS, candidate_bars, cycle_legend,
                              cycle_strip, pnl_chart, session_chart)
 from core import heartbeat as hb
+from core import runctl
 from core.livestate import Bridge
 from core.marketclock import CalendarError, MarketCalendar
 from core.positionvalue import value as value_position
@@ -491,18 +492,43 @@ with trade_tab:
               if age is not None else "no cycle has run today"),
              "good" if watching else "bad")
 
-        if not watching:
+        # A terminal command is not an answer for someone who wanted a button.
+        run = st.columns([1, 1, 3])
+        if watching:
+            if run[0].button("■ Stop the loop", width="stretch"):
+                if once_only("stop_loop"):
+                    ok, msg = runctl.stop(name=instance)
+                    (st.success if ok else st.error)(msg)
+                    bridge.record("runner", action="stop", ok=ok, result=msg)
+                st.rerun()
+            run[1].caption(f"Cycling every 30s · {hb.describe(name=instance)}")
+        else:
+            if run[0].button("▶ Start the loop", type="primary",
+                             width="stretch"):
+                if once_only("start_loop"):
+                    with st.spinner("Starting, and waiting for it to check "
+                                    "in..."):
+                        ok, msg = runctl.start(
+                            name=instance, symbols=tuple(symbols),
+                            risk_pct=risk_pct)
+                    (st.success if ok else st.error)(msg)
+                    bridge.record("runner", action="start", ok=ok, result=msg)
+                st.rerun()
             st.warning(
                 "**Auto is not running on its own.** Each press of *Run one "
                 "cycle* is one check and then nothing, so the 15:55 close "
-                "only happens if you are here to press it. Start the loop in "
-                "a terminal and leave it:")
-            st.code("python autorun.py", language="bash")
-            st.caption("It cycles every 30 seconds, keeps going past the "
-                       "window so the flatten actually happens, and stops "
-                       "once the session is over and you are flat. Ctrl-C to "
-                       "stop it. Add `--dry-run` to watch it decide without "
-                       "sending anything.")
+                "only happens if you are here to press it. Start the loop and "
+                "it keeps going past the window so the flatten actually "
+                "happens, then stops once the session is over and you are "
+                "flat.")
+            st.caption("Same thing from a terminal, if you prefer: "
+                       "`python autorun.py` — add `--dry-run` to watch it "
+                       "decide without sending anything.")
+
+        tail = runctl.recent_output(name=instance, lines=8)
+        if tail:
+            with st.expander("What the loop has been doing"):
+                st.code("\n".join(tail), language="text")
 
         if not MEASURED.is_profitable:
             st.caption(

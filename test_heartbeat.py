@@ -143,16 +143,62 @@ def test_no_temp_file_is_left_behind(tmp_path):
     assert not list(tmp_path.glob("*.tmp"))
 
 
-def test_a_long_gone_pid_is_dead_whatever_the_platform_calls_it():
-    """POSIX raises ProcessLookupError for a pid that is gone; Windows raises
-    `OSError: [WinError 87]`. Pinned on the answer rather than the exception,
-    so it keeps meaning the same thing on either.
-
-    Deliberately not a just-exited child: Windows keeps such a pid openable
-    for a while and reports it alive, which is why `alive()` does not rely on
-    this check alone. See the note in `pid_alive`.
-    """
+def test_a_pid_that_never_existed_is_dead():
     assert not hb.pid_alive(999_999_998)
     assert not hb.pid_alive(0)
     assert not hb.pid_alive(-1)
+    assert not hb.pid_alive("nonsense")
     assert hb.pid_alive(os.getpid())
+
+
+def test_a_just_exited_process_is_dead_even_while_a_handle_is_held():
+    """This is why `os.kill(pid, 0)` is not usable on Windows. A handle stays
+    valid after the process exits, so the Popen object still holding one made
+    a dead child look alive. GetExitCodeProcess answers directly."""
+    import subprocess
+    import sys
+    p = subprocess.Popen([sys.executable, "-c", "pass"])
+    p.wait()
+    assert p.poll() is not None, "the child really has exited"
+    assert not hb.pid_alive(p.pid)
+
+
+def test_a_live_detached_grandchild_is_alive():
+    """The other direction, and the worse one. A running loop that reads as
+    dead makes the page offer to start a second, and two loops on one account
+    both act on the same setup.
+
+    The loop is always a grandchild: the venv launcher spawns the real
+    interpreter, so the pid in the heartbeat is not the pid Popen returned,
+    and we hold no handle to it.
+    """
+    import json
+    import subprocess
+    import sys
+    import tempfile
+    import time
+    from pathlib import Path as P
+
+    from core import runctl
+
+    tmp = P(tempfile.mkdtemp())
+    script = tmp / "c.py"
+    script.write_text(chr(10).join([
+        "import os, time, json, pathlib",
+        f"d = pathlib.Path({str(tmp)!r})",
+        "while True:",
+        "    (d / 'pid.json').write_text(json.dumps({'pid': os.getpid()}))",
+        "    time.sleep(0.3)",
+    ]), encoding="utf-8")
+
+    proc = subprocess.Popen([sys.executable, str(script)],
+                            **runctl._detached_flags())
+    try:
+        for _ in range(40):
+            time.sleep(0.25)
+            if (tmp / "pid.json").exists():
+                break
+        recorded = json.loads((tmp / "pid.json").read_text())["pid"]
+        assert hb.pid_alive(recorded), "a running grandchild read as dead"
+    finally:
+        proc.kill()

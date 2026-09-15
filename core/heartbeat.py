@@ -21,7 +21,11 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-LIVE = Path(__file__).resolve().parent.parent / "live"
+#: Overridable so a test -- or a second install -- can point a *child
+#: process* somewhere else. Monkeypatching the module global cannot reach a
+#: process that imports it fresh, and the loop is always a separate process.
+LIVE = Path(os.environ.get("ALGOTRADER_LIVE_DIR")
+            or Path(__file__).resolve().parent.parent / "live")
 
 #: A heartbeat older than this means the loop is gone, whatever the pid says.
 #: Generous next to a 30s cycle, because one slow broker call must not read
@@ -74,35 +78,75 @@ def age_seconds(root: Path | None = None, name: str = "") -> float | None:
     return (datetime.now(timezone.utc) - then).total_seconds()
 
 
+#: Windows: the least privilege that lets us ask about a process we did not
+#: create. `os.kill` asks for PROCESS_ALL_ACCESS, which is both more than is
+#: needed and not always granted.
+_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+_STILL_ACTIVE = 259
+
+
+def _pid_alive_windows(pid: int) -> bool:
+    """Open the process and ask whether it has an exit code yet.
+
+    `os.kill(pid, 0)` is not good enough here, for two separate reasons that
+    both showed up in practice:
+
+      * It only checks that OpenProcess succeeded. A handle stays valid after
+        the process exits, so anything still holding one -- a `Popen` object,
+        for instance -- makes a dead process look alive. Measured: a killed
+        child opened fine and reported exit code 1.
+      * It asks for PROCESS_ALL_ACCESS, far more than is needed to ask a
+        question, and a live process we do not own a handle to can come back
+        as ERROR_INVALID_PARAMETER -- indistinguishable from "no such pid".
+        That made a running loop read as dead, which is the worse direction:
+        the page would offer to start a second one.
+
+    GetExitCodeProcess answers directly. The known wart is that a process
+    which genuinely exits with code 259 is indistinguishable from a running
+    one; 259 is STILL_ACTIVE and nothing can be done about that from here.
+    """
+    import ctypes
+
+    kernel32 = ctypes.windll.kernel32
+    handle = kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION,
+                                  False, int(pid))
+    if not handle:
+        return True
+    try:
+        code = ctypes.c_ulong()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+            return False
+        return code.value == _STILL_ACTIVE
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def pid_alive(pid: int) -> bool:
     """Whether that process still exists.
 
-    `os.kill(pid, 0)` is the portable check. A pid we are not allowed to
-    signal is still a running process, so PermissionError counts as alive.
-
-    The exception differs by platform, which is why the catch is broad.
-    POSIX raises ProcessLookupError for a pid that is gone; Windows raises
-    `OSError: [WinError 87] The parameter is incorrect`, so on Windows the
-    ProcessLookupError branch never fires and the generic OSError catch does
-    the work.
-
-    **It is not instant on Windows.** A process that exited seconds ago stays
-    openable for a while and reports as alive here. Measured, not assumed:
-    a child that had already exited still answered True. That is why `alive()`
-    pairs this with a staleness window, and why a clean shutdown calls
-    `clear()` rather than relying on the pid going away -- the pid check
-    catches a loop that died a while back, the timestamp catches one that
-    hung, and `clear()` makes an orderly stop show up immediately.
+    Windows and POSIX need genuinely different checks; see
+    `_pid_alive_windows` for why `os.kill(pid, 0)` is not usable there.
     """
-    if not pid or pid < 0:
-        return False
     try:
-        os.kill(int(pid), 0)
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+
+    if os.name == "nt":
+        try:
+            return _pid_alive_windows(pid)
+        except OSError:
+            return False
+
+    try:
+        os.kill(pid, 0)
     except ProcessLookupError:
         return False
     except PermissionError:
-        return True
-    except (OSError, ValueError, TypeError):
+        return True                    # running, just not ours to signal
+    except OSError:
         return False
     return True
 
