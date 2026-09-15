@@ -79,10 +79,18 @@ def age_seconds(root: Path | None = None, name: str = "") -> float | None:
 
 
 #: Windows: the least privilege that lets us ask about a process we did not
-#: create. `os.kill` asks for PROCESS_ALL_ACCESS, which is both more than is
-#: needed and not always granted.
+#: create. `os.kill` asks for PROCESS_ALL_ACCESS, which is more than is needed
+#: to ask a question.
+#:
+#: Honest note: on this machine the two masks behave identically for every
+#: process reachable from a test -- protected system processes refuse both.
+#: QUERY_LIMITED is kept because it is the documented mask for this query and
+#: asks for less, not because a difference has been demonstrated.
 _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 _STILL_ACTIVE = 259
+#: OpenProcess failed because the process exists and is not ours to open.
+#: That is a live process, not a missing one.
+_ERROR_ACCESS_DENIED = 5
 
 
 def _pid_alive_windows(pid: int) -> bool:
@@ -96,14 +104,17 @@ def _pid_alive_windows(pid: int) -> bool:
         for instance -- makes a dead process look alive. Measured: a killed
         child opened fine and reported exit code 1.
       * It asks for PROCESS_ALL_ACCESS, far more than is needed to ask a
-        question, and a live process we do not own a handle to can come back
-        as ERROR_INVALID_PARAMETER -- indistinguishable from "no such pid".
-        That made a running loop read as dead, which is the worse direction:
-        the page would offer to start a second one.
+        question.
 
     GetExitCodeProcess answers directly. The known wart is that a process
     which genuinely exits with code 259 is indistinguishable from a running
     one; 259 is STILL_ACTIVE and nothing can be done about that from here.
+
+    A failure to open is read the way POSIX reads it: "access denied" means
+    the process is there and is not ours, which is alive. Anything else means
+    gone. Without that, the two platforms disagreed -- the POSIX branch has
+    always counted PermissionError as alive -- and any process running under
+    different rights read as dead here.
     """
     import ctypes
 
@@ -111,7 +122,7 @@ def _pid_alive_windows(pid: int) -> bool:
     handle = kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION,
                                   False, int(pid))
     if not handle:
-        return False
+        return kernel32.GetLastError() == _ERROR_ACCESS_DENIED
     try:
         code = ctypes.c_ulong()
         if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):

@@ -109,6 +109,11 @@ def test_starting_and_stopping_a_real_process(tmp_path, monkeypatch):
     stopped, msg = runctl.stop()
     assert stopped, msg
     assert not runctl.running()
+    # `running()` would be False anyway once the pid dies, so it cannot tell
+    # you whether the file was tidied. A killed process never reaches its own
+    # cleanup, so stop() has to do it -- otherwise the next start reads a
+    # heartbeat for a process that is gone.
+    assert not hb.path().exists(), "stop left the heartbeat file behind"
 
 
 def test_stopping_something_that_is_not_running_is_not_an_error(tmp_path):

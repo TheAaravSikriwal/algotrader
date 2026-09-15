@@ -216,3 +216,29 @@ def test_a_live_detached_grandchild_is_alive():
         assert hb.pid_alive(recorded), "a running grandchild read as dead"
     finally:
         proc.kill()
+
+
+def test_a_process_we_are_not_allowed_to_open_counts_as_alive():
+    """OpenProcess failing with ERROR_ACCESS_DENIED proves the process is
+    there -- you cannot be denied access to something that does not exist.
+
+    The POSIX branch has always read PermissionError that way. The Windows
+    branch did not, so anything running under different rights read as dead,
+    and a dead-looking loop is the direction that makes the page offer to
+    start a second one.
+    """
+    if os.name != "nt":
+        return
+    import subprocess as sp
+    rows = sp.run(["tasklist", "/fo", "csv", "/nh"],
+                  capture_output=True, text=True, **_quiet()).stdout
+    protected = []
+    for line in rows.splitlines():
+        parts = [p.strip('"') for p in line.split('","')]
+        if len(parts) > 1 and parts[0].lower() in ("system", "smss.exe",
+                                                   "csrss.exe", "wininit.exe"):
+            protected.append(int(parts[1]))
+    if not protected:
+        return                      # nothing to test against on this machine
+    assert any(hb.pid_alive(pid) for pid in protected), (
+        "every protected system process read as dead")
